@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import cors from "cors";
 import {
   securityMiddleware,
   apiLimiter,
@@ -16,68 +17,203 @@ import categoriasRoutes from "./routes/categorias.js";
 import sesionesCajaRoutes from "./routes/sesionesCaja.js";
 import detallesVentaRoutes from "./routes/detallesVenta.js";
 import usersRoutes from "./routes/users.js";
-
 import diagnosticRoutes from "./routes/diagnostic.js";
+
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ✅ CONFIGURACIÓN CORS IDÉNTICA A TU PROYECTO ANTERIOR
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173", // Vite dev server
+      "http://localhost:3000", // React dev server
+      "https://tu-frontend.vercel.app", // Tu dominio de producción
+      // Agrega aquí otros dominios permitidos
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-token", "Authorization"],
+  })
+);
 
 // Middlewares básicos
 app.use(securityMiddleware);
 app.use(apiLimiter);
 app.use(express.json({ limit: "10mb" }));
 
-// Logger solo para desarrollo
-if (process.env.NODE_ENV === "development") {
-  app.use((req, res, next) => {
-    console.log(`${req.method} ${req.path}`);
-    next();
-  });
-}
+// ✅ LOGS MEJORADOS - SIN REPETICIONES
+app.use((req, res, next) => {
+  const timestamp = new Date().toLocaleTimeString();
+  const hasToken = !!req.headers["x-token"];
 
-// Rutas API
-app.use("/api/auth", loginLimiter, authRoutes);
-app.use("/api/ventas", writeLimiter, ventasRoutes);
-app.use("/api/productos", productosRoutes);
-app.use("/api/categorias", categoriasRoutes);
-app.use("/api/inventario", inventarioRoutes);
-app.use("/api/cierres", writeLimiter, cierresRoutes);
-app.use("/api/sesiones-caja", sesionesCajaRoutes);
-app.use("/api/detalles-venta", detallesVentaRoutes);
-app.use("/api/users", usersRoutes);
+  console.log(`🌐 ${timestamp} - ${req.method} ${req.originalUrl}`);
+  console.log(`🔑 Token presente: ${hasToken ? "✅" : "❌"}`);
 
-app.use("/api/diagnostic", diagnosticRoutes);
-// Health check
+  next();
+});
+
+// ✅ HEALTH CHECK MEJORADO
 app.get("/api/health", async (req, res) => {
-  const dbConnected = db.isConnected();
+  let dbStatus = "unknown";
+  try {
+    // Asumiendo que tu db tiene un método para verificar conexión
+    dbStatus = db.isConnected() ? "connected" : "disconnected";
+  } catch (error) {
+    dbStatus = "error";
+    console.log("❌ Health check - Error BD:", error.message);
+  }
+
   res.json({
-    status: "OK",
-    database: dbConnected ? "connected" : "disconnected",
+    ok: true,
+    msg: "Servidor Kiosko POS funcionando",
+    database: dbStatus,
+    environment: process.env.NODE_ENV || "development",
     timestamp: new Date().toISOString(),
   });
 });
 
-// Manejo de errores
+// ✅ MÉTODO HEAD PARA MONITOREO EXTERNO
+app.head("/api/health", (req, res) => {
+  // Respuesta inmediata para monitores como UptimeRobot
+  res.status(200).end();
+});
+
+// ✅ RUTA RAIZ INFORMATIVA
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    msg: "Bienvenido a Kiosko POS Backend API",
+    timestamp: new Date().toISOString(),
+    status: "online",
+    documentation: "Consulta /api/health para estado del servidor",
+  });
+});
+
+// ✅ RUTAS API CON LOGS DE CARGA
+console.log("🔄 CARGANDO RUTAS API...");
+
+const routes = [
+  {
+    path: "/api/auth",
+    route: authRoutes,
+    limiter: loginLimiter,
+    description: "Autenticación",
+  },
+  {
+    path: "/api/ventas",
+    route: ventasRoutes,
+    limiter: writeLimiter,
+    description: "Ventas",
+  },
+  { path: "/api/productos", route: productosRoutes, description: "Productos" },
+  {
+    path: "/api/categorias",
+    route: categoriasRoutes,
+    description: "Categorías",
+  },
+  {
+    path: "/api/inventario",
+    route: inventarioRoutes,
+    description: "Inventario",
+  },
+  {
+    path: "/api/cierres",
+    route: cierresRoutes,
+    limiter: writeLimiter,
+    description: "Cierres de caja",
+  },
+  {
+    path: "/api/sesiones-caja",
+    route: sesionesCajaRoutes,
+    description: "Sesiones de caja",
+  },
+  {
+    path: "/api/detalles-venta",
+    route: detallesVentaRoutes,
+    description: "Detalles de venta",
+  },
+  { path: "/api/users", route: usersRoutes, description: "Usuarios" },
+  {
+    path: "/api/diagnostic",
+    route: diagnosticRoutes,
+    description: "Diagnóstico",
+  },
+];
+
+routes.forEach(({ path, route, limiter, description }) => {
+  if (limiter) {
+    app.use(path, limiter, route);
+  } else {
+    app.use(path, route);
+  }
+  console.log(`✅ Ruta cargada: ${path} - ${description}`);
+});
+
+console.log("✅ TODAS LAS RUTAS CARGADAS\n");
+
+// ✅ MANEJO DE ERRORES MEJORADO
 app.use("*", (req, res) => {
-  res.status(404).json({ error: "Ruta no encontrada" });
+  console.log(`❌ 404 - Ruta no encontrada: ${req.method} ${req.originalUrl}`);
+
+  res.status(404).json({
+    ok: false,
+    error: "Ruta no encontrada",
+    path: req.originalUrl,
+    method: req.method,
+    availableRoutes: routes.map((r) => ({
+      path: r.path,
+      description: r.description,
+    })),
+  });
 });
 
 app.use((error, req, res, next) => {
-  console.error(error.message);
-  res.status(500).json({ error: "Error interno del servidor" });
+  console.error(`💥 Error en ${req.method} ${req.path}:`, error.message);
+
+  res.status(500).json({
+    ok: false,
+    error: "Error interno del servidor",
+    ...(process.env.NODE_ENV === "development" && {
+      details: error.message,
+      stack: error.stack,
+    }),
+  });
 });
 
-// Iniciar servidor
+// ✅ INICIAR SERVIDOR MEJORADO
 const startServer = async () => {
   try {
+    console.log("🚀 INICIANDO SERVIDOR KIOSKO POS...");
+    console.log("🌍 Environment:", process.env.NODE_ENV || "development");
+    console.log("🔗 Puerto:", PORT);
+
+    // Inicializar base de datos
     await db.init();
+    console.log("🗄️  Base de datos: ✅ Conectada");
+
     app.listen(PORT, () => {
-      console.log(`✅ Servidor en puerto ${PORT}`);
-      console.log(`🌍 Modo: ${process.env.NODE_ENV || "development"}`);
+      console.log(`\n🎉 SERVIDOR INICIADO EXITOSAMENTE`);
+      console.log(`📍 Puerto: ${PORT}`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
+      console.log(`🔗 URL: http://localhost:${PORT}`);
+      console.log(`📊 Health Check: http://localhost:${PORT}/api/health`);
+
+      console.log(`\n📋 RUTAS DISPONIBLES:`);
+      routes.forEach((route) => {
+        console.log(`   ${route.path} - ${route.description}`);
+      });
+
+      console.log(`\n🔧 ENDPOINTS PÚBLICOS:`);
+      console.log(`   GET  /api/health (Estado del servidor)`);
+      console.log(`   POST /api/auth (Login)`);
+      console.log(`   GET  /api/productos (Productos públicos)`);
+      console.log(`   GET  /api/categorias (Categorías públicas)`);
     });
   } catch (error) {
-    console.error("❌ Error al iniciar:", error.message);
+    console.error("❌ ERROR CRÍTICO INICIANDO SERVIDOR:", error.message);
     process.exit(1);
   }
 };
