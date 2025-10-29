@@ -30,7 +30,7 @@ app.use(
     origin: [
       "http://localhost:5173", // Vite dev server
       "http://localhost:3000", // React dev server
-      "https://tu-frontend.vercel.app", // Tu dominio de producción
+      "https://sistema-de-ventas-pos-frontend.vercel.app", // Tu dominio de producción
       // Agrega aquí otros dominios permitidos
     ],
     credentials: true,
