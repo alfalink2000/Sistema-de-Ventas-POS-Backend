@@ -1,8 +1,9 @@
+// middlewares/security.js - CONFIGURACIÓN CORS COMPLETA (igual a tu proyecto antiguo)
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 
-// ✅ Configuración CORS MEJORADA
+// ✅ Configuración CORS MEJORADA Y SIMPLIFICADA
 const corsOptions = {
   origin: function (origin, callback) {
     // En desarrollo, permitir todos los orígenes para debug
@@ -20,10 +21,11 @@ const corsOptions = {
       "http://127.0.0.1:3000",
       "https://localhost:5173",
       "https://localhost:3000",
+      "https://sistema-de-ventas-pos-frontend.vercel.app",
       // Agrega aquí tus dominios de producción
     ];
 
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes("*")) {
       callback(null, true);
     } else {
       console.log("❌ CORS bloqueado para origen:", origin);
@@ -47,10 +49,13 @@ const corsOptions = {
 
 // ✅ Middleware CORS manual como respaldo
 const manualCORS = (req, res, next) => {
-  const allowedOrigins =
-    process.env.NODE_ENV === "development" ? "*" : "http://localhost:5173";
-
-  res.header("Access-Control-Allow-Origin", allowedOrigins);
+  // Headers CORS esenciales
+  res.header(
+    "Access-Control-Allow-Origin",
+    process.env.NODE_ENV === "development"
+      ? req.headers.origin || "*"
+      : "https://sistema-de-ventas-pos-frontend.vercel.app"
+  );
   res.header(
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, DELETE, OPTIONS, PATCH"
@@ -92,20 +97,20 @@ const apiLimiter = rateLimit({
   },
 });
 
-// Rate limiting para creación de productos/ventas
+// Rate limiting para escritura
 const writeLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50,
   message: {
     ok: false,
-    msg: "Demasiadas operaciones de escritura. Intenta más tarde.",
+    msg: "Demasiadas operaciones de escritura.",
   },
 });
 
 // Middlewares de seguridad
 const securityMiddleware = [
-  manualCORS,
-  cors(corsOptions),
+  manualCORS, // ✅ CORS MANUAL PRIMERO
+  cors(corsOptions), // ✅ CORS de cors package
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,

@@ -1,11 +1,12 @@
+// server.js - CON CORS COMPLETO
 import express from "express";
 import dotenv from "dotenv";
-import cors from "cors";
 import {
   securityMiddleware,
   apiLimiter,
   loginLimiter,
   writeLimiter,
+  manualCORS, // ✅ IMPORTAR manualCORS
 } from "./middlewares/security.js";
 import ventasRoutes from "./routes/ventas.js";
 import productosRoutes from "./routes/productos.js";
@@ -24,33 +25,23 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ CONFIGURACIÓN CORS IDÉNTICA A TU PROYECTO ANTERIOR
-app.use(
-  cors({
-    origin: [
-      "http://localhost:5173", // Vite dev server
-      "http://localhost:3000", // React dev server
-      "https://sistema-de-ventas-pos-frontend.vercel.app", // Tu dominio de producción
-      // Agrega aquí otros dominios permitidos
-    ],
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "x-token", "Authorization"],
-  })
-);
+// ✅ CORS MANUAL PRIMERO (igual a tu proyecto antiguo)
+app.use(manualCORS);
 
-// Middlewares básicos
+// Middlewares de seguridad (incluye CORS automático)
 app.use(securityMiddleware);
 app.use(apiLimiter);
 app.use(express.json({ limit: "10mb" }));
 
-// ✅ LOGS MEJORADOS - SIN REPETICIONES
+// ✅ LOGS MEJORADOS CON INFO CORS
 app.use((req, res, next) => {
   const timestamp = new Date().toLocaleTimeString();
   const hasToken = !!req.headers["x-token"];
+  const origin = req.headers.origin || "no-origin";
 
   console.log(`🌐 ${timestamp} - ${req.method} ${req.originalUrl}`);
-  console.log(`🔑 Token presente: ${hasToken ? "✅" : "❌"}`);
+  console.log(`📍 Origen: ${origin}`);
+  console.log(`🔑 Token: ${hasToken ? "✅" : "❌"}`);
 
   next();
 });
@@ -59,7 +50,6 @@ app.use((req, res, next) => {
 app.get("/api/health", async (req, res) => {
   let dbStatus = "unknown";
   try {
-    // Asumiendo que tu db tiene un método para verificar conexión
     dbStatus = db.isConnected() ? "connected" : "disconnected";
   } catch (error) {
     dbStatus = "error";
@@ -71,13 +61,20 @@ app.get("/api/health", async (req, res) => {
     msg: "Servidor Kiosko POS funcionando",
     database: dbStatus,
     environment: process.env.NODE_ENV || "development",
+    cors: {
+      allowedOrigins: [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://sistema-de-ventas-pos-frontend.vercel.app",
+      ],
+      credentials: true,
+    },
     timestamp: new Date().toISOString(),
   });
 });
 
-// ✅ MÉTODO HEAD PARA MONITOREO EXTERNO
+// ✅ MÉTODO HEAD PARA MONITOREO
 app.head("/api/health", (req, res) => {
-  // Respuesta inmediata para monitores como UptimeRobot
   res.status(200).end();
 });
 
@@ -88,11 +85,12 @@ app.get("/", (req, res) => {
     msg: "Bienvenido a Kiosko POS Backend API",
     timestamp: new Date().toISOString(),
     status: "online",
+    cors: "Configurado para desarrollo y producción",
     documentation: "Consulta /api/health para estado del servidor",
   });
 });
 
-// ✅ RUTAS API CON LOGS DE CARGA
+// ✅ RUTAS API
 console.log("🔄 CARGANDO RUTAS API...");
 
 const routes = [
@@ -123,17 +121,17 @@ const routes = [
     path: "/api/cierres",
     route: cierresRoutes,
     limiter: writeLimiter,
-    description: "Cierres de caja",
+    description: "Cierres",
   },
   {
     path: "/api/sesiones-caja",
     route: sesionesCajaRoutes,
-    description: "Sesiones de caja",
+    description: "Sesiones caja",
   },
   {
     path: "/api/detalles-venta",
     route: detallesVentaRoutes,
-    description: "Detalles de venta",
+    description: "Detalles venta",
   },
   { path: "/api/users", route: usersRoutes, description: "Usuarios" },
   {
@@ -149,7 +147,7 @@ routes.forEach(({ path, route, limiter, description }) => {
   } else {
     app.use(path, route);
   }
-  console.log(`✅ Ruta cargada: ${path} - ${description}`);
+  console.log(`✅ ${path} - ${description}`);
 });
 
 console.log("✅ TODAS LAS RUTAS CARGADAS\n");
@@ -173,24 +171,36 @@ app.use("*", (req, res) => {
 app.use((error, req, res, next) => {
   console.error(`💥 Error en ${req.method} ${req.path}:`, error.message);
 
+  // Si es error CORS, dar mensaje específico
+  if (error.message.includes("CORS")) {
+    return res.status(403).json({
+      ok: false,
+      error: "Acceso denegado por política CORS",
+      origin: req.headers.origin,
+      allowedOrigins: [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://sistema-de-ventas-pos-frontend.vercel.app",
+      ],
+    });
+  }
+
   res.status(500).json({
     ok: false,
     error: "Error interno del servidor",
     ...(process.env.NODE_ENV === "development" && {
       details: error.message,
-      stack: error.stack,
     }),
   });
 });
 
-// ✅ INICIAR SERVIDOR MEJORADO
+// ✅ INICIAR SERVIDOR
 const startServer = async () => {
   try {
     console.log("🚀 INICIANDO SERVIDOR KIOSKO POS...");
     console.log("🌍 Environment:", process.env.NODE_ENV || "development");
     console.log("🔗 Puerto:", PORT);
 
-    // Inicializar base de datos
     await db.init();
     console.log("🗄️  Base de datos: ✅ Conectada");
 
@@ -198,19 +208,20 @@ const startServer = async () => {
       console.log(`\n🎉 SERVIDOR INICIADO EXITOSAMENTE`);
       console.log(`📍 Puerto: ${PORT}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
-      console.log(`🔗 URL: http://localhost:${PORT}`);
+      console.log(`🔗 URL Local: http://localhost:${PORT}`);
       console.log(`📊 Health Check: http://localhost:${PORT}/api/health`);
+
+      console.log(`\n🌐 CONFIGURACIÓN CORS:`);
+      console.log(`   ✅ Desarrollo: Todos los orígenes permitidos`);
+      console.log(`   ✅ Producción: Dominios específicos`);
+      console.log(
+        `   🔗 Frontend: https://sistema-de-ventas-pos-frontend.vercel.app`
+      );
 
       console.log(`\n📋 RUTAS DISPONIBLES:`);
       routes.forEach((route) => {
         console.log(`   ${route.path} - ${route.description}`);
       });
-
-      console.log(`\n🔧 ENDPOINTS PÚBLICOS:`);
-      console.log(`   GET  /api/health (Estado del servidor)`);
-      console.log(`   POST /api/auth (Login)`);
-      console.log(`   GET  /api/productos (Productos públicos)`);
-      console.log(`   GET  /api/categorias (Categorías públicas)`);
     });
   } catch (error) {
     console.error("❌ ERROR CRÍTICO INICIANDO SERVIDOR:", error.message);
