@@ -1,4 +1,4 @@
-// server.js - CON CORS COMPLETO
+// server.js - VERSIÓN ACTUALIZADA CON HEALTH
 import express from "express";
 import dotenv from "dotenv";
 import {
@@ -6,7 +6,7 @@ import {
   apiLimiter,
   loginLimiter,
   writeLimiter,
-  manualCORS, // ✅ IMPORTAR manualCORS
+  manualCORS,
 } from "./middlewares/security.js";
 import ventasRoutes from "./routes/ventas.js";
 import productosRoutes from "./routes/productos.js";
@@ -19,21 +19,22 @@ import sesionesCajaRoutes from "./routes/sesionesCaja.js";
 import detallesVentaRoutes from "./routes/detallesVenta.js";
 import usersRoutes from "./routes/users.js";
 import diagnosticRoutes from "./routes/diagnostic.js";
+import healthRoutes from "./routes/health.js"; // ✅ IMPORT CORREGIDO
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ CORS MANUAL PRIMERO (igual a tu proyecto antiguo)
+// ✅ CORS MANUAL PRIMERO
 app.use(manualCORS);
 
-// Middlewares de seguridad (incluye CORS automático)
+// Middlewares de seguridad
 app.use(securityMiddleware);
 app.use(apiLimiter);
 app.use(express.json({ limit: "10mb" }));
 
-// ✅ LOGS MEJORADOS CON INFO CORS
+// ✅ LOGS MEJORADOS
 app.use((req, res, next) => {
   const timestamp = new Date().toLocaleTimeString();
   const hasToken = !!req.headers["x-token"];
@@ -46,38 +47,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ HEALTH CHECK MEJORADO
-app.get("/api/health", async (req, res) => {
-  let dbStatus = "unknown";
-  try {
-    dbStatus = db.isConnected() ? "connected" : "disconnected";
-  } catch (error) {
-    dbStatus = "error";
-    console.log("❌ Health check - Error BD:", error.message);
-  }
-
-  res.json({
-    ok: true,
-    msg: "Servidor Kiosko POS funcionando",
-    database: dbStatus,
-    environment: process.env.NODE_ENV || "development",
-    cors: {
-      allowedOrigins: [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://sistema-de-ventas-pos-frontend.vercel.app",
-      ],
-      credentials: true,
-    },
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// ✅ MÉTODO HEAD PARA MONITOREO
-app.head("/api/health", (req, res) => {
-  res.status(200).end();
-});
-
 // ✅ RUTA RAIZ INFORMATIVA
 app.get("/", (req, res) => {
   res.json({
@@ -86,7 +55,11 @@ app.get("/", (req, res) => {
     timestamp: new Date().toISOString(),
     status: "online",
     cors: "Configurado para desarrollo y producción",
-    documentation: "Consulta /api/health para estado del servidor",
+    documentation: {
+      health: "GET /api/health",
+      extended: "GET /api/health/extended",
+      minimal: "GET /api/health/minimal",
+    },
   });
 });
 
@@ -94,6 +67,11 @@ app.get("/", (req, res) => {
 console.log("🔄 CARGANDO RUTAS API...");
 
 const routes = [
+  {
+    path: "/api/health",
+    route: healthRoutes, // ✅ RUTA DE HEALTH
+    description: "Health Checks",
+  },
   {
     path: "/api/auth",
     route: authRoutes,
@@ -171,7 +149,6 @@ app.use("*", (req, res) => {
 app.use((error, req, res, next) => {
   console.error(`💥 Error en ${req.method} ${req.path}:`, error.message);
 
-  // Si es error CORS, dar mensaje específico
   if (error.message.includes("CORS")) {
     return res.status(403).json({
       ok: false,
@@ -209,7 +186,15 @@ const startServer = async () => {
       console.log(`📍 Puerto: ${PORT}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
       console.log(`🔗 URL Local: http://localhost:${PORT}`);
-      console.log(`📊 Health Check: http://localhost:${PORT}/api/health`);
+
+      console.log(`\n🏥 ENDPOINTS DE HEALTH CHECK:`);
+      console.log(`   📊 Básico:     http://localhost:${PORT}/api/health`);
+      console.log(
+        `   📈 Extendido:  http://localhost:${PORT}/api/health/extended`
+      );
+      console.log(
+        `   ⚡ Mínimo:     http://localhost:${PORT}/api/health/minimal`
+      );
 
       console.log(`\n🌐 CONFIGURACIÓN CORS:`);
       console.log(`   ✅ Desarrollo: Todos los orígenes permitidos`);
