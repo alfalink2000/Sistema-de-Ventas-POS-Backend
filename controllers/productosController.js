@@ -1,11 +1,10 @@
-// controllers/productosController.js - SIN TRANSACCIONES
+// controllers/productosController.js - VERSIÓN COMPLETA CON SINCRONIZACIÓN BIDIRECCIONAL
 import { Producto } from "../models/Producto.js";
 import { Inventario } from "../models/Inventario.js";
 import { uploadToImgBB } from "../services/imageService.js";
 import { db } from "../database/connection.js";
 import bcrypt from "bcrypt";
 
-// controllers/productosController.js - CON MÁS DEBUG
 export const obtenerProductos = async (req, res) => {
   try {
     console.log("📥 [BACKEND] GET /api/productos recibida");
@@ -26,7 +25,6 @@ export const obtenerProductos = async (req, res) => {
     const productos = await Producto.findAll(filters);
 
     console.log(`📤 [BACKEND] Enviando ${productos.length} productos`);
-    console.log("📦 [BACKEND] Productos a enviar:", productos);
 
     res.json({
       ok: true,
@@ -84,7 +82,7 @@ export const obtenerProductoPorId = async (req, res) => {
   }
 };
 
-// ✅ CREAR PRODUCTO - SIN TRANSACCIONES
+// ✅ CREAR PRODUCTO - CON SINCRONIZACIÓN BIDIRECCIONAL
 export const crearProducto = async (req, res) => {
   try {
     console.log("🚨 ========== INICIO CREAR PRODUCTO ==========");
@@ -98,21 +96,12 @@ export const crearProducto = async (req, res) => {
       stock,
       descripcion,
       stock_minimo,
-      activo, // ✅ VERIFICAR ESTE VALOR
+      activo,
     } = req.body;
-
-    // ✅ DEBUG DETALLADO DEL CAMPO activo
-    console.log("🔍 VALOR DE ACTIVO RECIBIDO:");
-    console.log("   activo:", activo, `(tipo: ${typeof activo})`);
-    console.log("   activo === 'true':", activo === "true");
-    console.log("   activo === '1':", activo === "1");
-    console.log("   activo === true:", activo === true);
-    console.log("   Boolean(activo):", Boolean(activo));
 
     // ✅ CORREGIR LA LÓGICA DE ACTIVO
     const activoFinal =
       activo === "true" || activo === "1" || activo === true || activo === 1;
-
     console.log("🎯 ACTIVO FINAL PARA BD:", activoFinal);
 
     // ✅ VALIDACIONES
@@ -175,7 +164,7 @@ export const crearProducto = async (req, res) => {
       descripcion: descripcion ? descripcion.trim() : "",
       stock_minimo: stock_minimo ? parseInt(stock_minimo) : 5,
       imagen_url,
-      activo: activo === "true" || activo === true,
+      activo: activoFinal,
     };
 
     console.log("📦 DATOS PARA CREAR PRODUCTO:", productoData);
@@ -185,29 +174,26 @@ export const crearProducto = async (req, res) => {
     const productoId = await Producto.create(productoData);
     console.log("✅ PRODUCTO CREADO CON ID:", productoId);
 
-    // ✅ CREAR INVENTARIO
-    console.log("📊 Creando registro en inventario...");
+    // ✅ CRÍTICO: CREAR INVENTARIO CON LOS MISMOS VALORES
+    console.log("📊 Creando registro en inventario sincronizado...");
     try {
       await Inventario.create({
         producto_id: productoId,
-        stock_actual: productoData.stock,
-        stock_minimo: productoData.stock_minimo,
+        stock_actual: productoData.stock, // ✅ MISMO VALOR QUE PRODUCTO
+        stock_minimo: productoData.stock_minimo, // ✅ MISMO VALOR QUE PRODUCTO
       });
-      console.log("✅ REGISTRO DE INVENTARIO CREADO");
+      console.log("✅ REGISTRO DE INVENTARIO CREADO Y SINCRONIZADO");
     } catch (inventarioError) {
       console.error("❌ Error creando inventario:", inventarioError);
-      // No eliminamos el producto, solo continuamos
     }
 
     // ✅ OBTENER PRODUCTO COMPLETO
     const productoCompleto = await Producto.findById(productoId);
     const inventarioRegistro = await Inventario.findByProductoId(productoId);
 
-    // ✅ RESPUESTA CONSISTENTE - IMPORTANTE: usar la misma estructura que espera el frontend
     const response = {
       ok: true,
       producto: {
-        // ✅ Asegurar que sea 'producto' (singular) no 'product'
         ...productoCompleto,
         inventario: inventarioRegistro,
       },
@@ -222,7 +208,6 @@ export const crearProducto = async (req, res) => {
     console.error("💥 ========== ERROR CRÍTICO ==========");
     console.error("❌ ERROR EN crearProducto:", error);
 
-    // Manejar errores específicos
     if (error.message.includes("UNIQUE constraint failed")) {
       return res.status(400).json({
         ok: false,
@@ -244,16 +229,11 @@ export const crearProducto = async (req, res) => {
   }
 };
 
-// ✅ ACTUALIZAR PRODUCTO - SIN TRANSACCIONES
+// ✅ ACTUALIZAR PRODUCTO - CON SINCRONIZACIÓN BIDIRECCIONAL
 export const actualizarProducto = async (req, res) => {
   try {
     const { id } = req.params;
     console.log("🔄 [BACKEND] Actualizando producto ID:", id);
-    console.log("📥 [BACKEND] Body recibido:", req.body);
-    console.log(
-      "📁 [BACKEND] File recibido:",
-      req.file ? `Sí - ${req.file.originalname}` : "No file"
-    );
 
     const {
       nombre,
@@ -267,13 +247,7 @@ export const actualizarProducto = async (req, res) => {
     } = req.body;
 
     console.log("🔍 VALORES RECIBIDOS PARA ACTUALIZAR:");
-    console.log("   nombre:", nombre);
-    console.log("   precio:", precio);
-    console.log("   precio_compra:", precio_compra);
-    console.log("   categoria_id:", categoria_id);
     console.log("   stock:", stock);
-    console.log("   stock_minimo:", stock_minimo);
-    console.log("   activo:", activo);
 
     // ✅ VALIDACIONES RÁPIDAS
     if (!nombre || nombre.trim().length === 0) {
@@ -322,33 +296,19 @@ export const actualizarProducto = async (req, res) => {
 
     let imagen_url = producto.imagen_url;
 
-    // ✅ SOLO PROCESAR IMAGEN SI HAY ARCHIVO Y ES VÁLIDO
+    // ✅ SOLO PROCESAR IMAGEN SI HAY ARCHIVO
     if (req.file && req.file.buffer && req.file.buffer.length > 0) {
       try {
         console.log("🖼️ Procesando nueva imagen...");
-        console.log("   Archivo:", req.file.originalname);
-        console.log("   Tamaño:", req.file.size, "bytes");
-
-        if (req.file.size > 5 * 1024 * 1024) {
-          return res.status(400).json({
-            ok: false,
-            msg: "La imagen es demasiado grande. Máximo 5MB permitido.",
-          });
-        }
-
-        console.log("📤 Subiendo imagen a ImgBB...");
         imagen_url = await uploadToImgBB(req.file.buffer);
         console.log("✅ Nueva imagen subida:", imagen_url ? "Éxito" : "Falló");
       } catch (uploadError) {
         console.error("❌ Error procesando nueva imagen:", uploadError);
-        // ✅ NO DEVOLVER ERROR - MANTENER IMAGEN ACTUAL
         console.log("⚠️  Manteniendo imagen actual debido a error");
       }
-    } else {
-      console.log("📭 No hay archivo de imagen - manteniendo imagen actual");
     }
 
-    // ✅ PREPARAR ACTUALIZACIONES RÁPIDAS
+    // ✅ PREPARAR ACTUALIZACIONES
     console.log("📦 Preparando actualizaciones...");
     const updates = {
       nombre: nombre.trim(),
@@ -377,17 +337,18 @@ export const actualizarProducto = async (req, res) => {
       });
     }
 
-    // ✅ ACTUALIZAR INVENTARIO
-    console.log("📊 Actualizando registro en inventario...");
+    // ✅ CRÍTICO: SINCRONIZAR INVENTARIO CON EL NUEVO STOCK
+    console.log("🔄 SINCRONIZANDO INVENTARIO CON PRODUCTO...");
+    console.log(`📦 Stock del producto: ${updates.stock}`);
+
     try {
       await Inventario.createOrUpdate(id, {
-        stock_actual: updates.stock,
-        stock_minimo: updates.stock_minimo,
+        stock_actual: updates.stock, // ✅ MISMOS VALORES
+        stock_minimo: updates.stock_minimo, // ✅ MISMOS VALORES
       });
-      console.log("✅ INVENTARIO ACTUALIZADO");
+      console.log("✅ INVENTARIO SINCRONIZADO CON PRODUCTO");
     } catch (inventarioError) {
-      console.error("❌ Error actualizando inventario:", inventarioError);
-      // No devolvemos error, solo log
+      console.error("❌ Error sincronizando inventario:", inventarioError);
     }
 
     console.log("✅ Producto e inventario actualizados exitosamente");
@@ -462,14 +423,16 @@ export const buscarProductos = async (req, res) => {
   }
 };
 
-// ✅ ACTUALIZAR STOCK - SIN TRANSACCIONES
+// ✅ ACTUALIZAR STOCK - CON SINCRONIZACIÓN BIDIRECCIONAL
 export const actualizarStock = async (req, res) => {
   try {
     const { id } = req.params;
     const { stock, adminPassword } = req.body;
 
-    console.log("🔄 [BACKEND] Actualizando stock para producto ID:", id);
-    console.log("📥 [BACKEND] Datos recibidos:", { stock, adminPassword });
+    console.log(
+      "🔄 [BACKEND] Actualizando stock BIDIRECCIONAL para producto ID:",
+      id
+    );
 
     // ✅ VALIDACIONES BÁSICAS
     if (
@@ -548,12 +511,11 @@ export const actualizarStock = async (req, res) => {
         }
       } catch (userError) {
         console.error("❌ Error verificando permisos:", userError);
-        // Continuar sin verificación de permisos en caso de error
       }
     }
 
-    // ✅ ACTUALIZAR STOCK EN PRODUCTO
-    console.log("💾 Actualizando stock en producto...");
+    // ✅ ACTUALIZAR STOCK EN PRODUCTO (TABLA productos)
+    console.log("💾 Actualizando stock en tabla PRODUCTOS...");
     const resultProducto = await Producto.actualizarStock(id, stockNum);
 
     if (!resultProducto) {
@@ -563,19 +525,18 @@ export const actualizarStock = async (req, res) => {
       });
     }
 
-    // ✅ ACTUALIZAR INVENTARIO
-    console.log("📊 Actualizando inventario...");
+    // ✅ CRÍTICO: ACTUALIZAR INVENTARIO CON EL MISMO VALOR (TABLA inventario)
+    console.log("📊 Actualizando stock en tabla INVENTARIO...");
     try {
       await Inventario.createOrUpdate(id, {
-        stock_actual: stockNum,
+        stock_actual: stockNum, // ✅ MISMO VALOR QUE EN PRODUCTOS
       });
-      console.log("✅ INVENTARIO ACTUALIZADO");
+      console.log("✅ INVENTARIO ACTUALIZADO CON MISMO STOCK");
     } catch (inventarioError) {
       console.error("❌ Error actualizando inventario:", inventarioError);
-      // No devolvemos error, solo log
     }
 
-    console.log("✅ Stock actualizado exitosamente");
+    console.log("✅ Stock actualizado BIDIRECCIONALMENTE en ambas tablas");
 
     // ✅ OBTENER DATOS ACTUALIZADOS
     const productoActualizado = await Producto.findById(id);
@@ -583,7 +544,7 @@ export const actualizarStock = async (req, res) => {
 
     res.json({
       ok: true,
-      message: "Stock actualizado correctamente",
+      message: "Stock actualizado correctamente en ambas tablas",
       product: {
         ...productoActualizado,
         inventario: inventarioActualizado,

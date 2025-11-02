@@ -1,79 +1,329 @@
+// controllers/inventarioController.js - VERSIÓN COMPLETA CON SINCRONIZACIÓN BIDIRECCIONAL
+import { Inventario } from "../models/Inventario.js";
+import { Producto } from "../models/Producto.js";
+import { db } from "../database/connection.js";
+import bcrypt from "bcrypt";
+
 export const obtenerInventario = async (req, res) => {
   try {
-    // Simulación de inventario
-    const inventario = [];
+    const inventario = await Inventario.findAll({ producto_activo: true });
+
+    console.log(
+      `📦 [CONTROLLER] Inventario obtenido: ${inventario.length} items`
+    );
 
     res.json({
+      ok: true,
       inventario,
       total: inventario.length,
     });
   } catch (error) {
-    console.error("Error al obtener inventario:", error);
+    console.error("❌ Error al obtener inventario:", error);
     res.status(500).json({
+      ok: false,
       error: "Error interno al obtener inventario",
     });
   }
 };
 
+// ✅ ACTUALIZAR STOCK - CON SINCRONIZACIÓN BIDIRECCIONAL
 export const actualizarStock = async (req, res) => {
   try {
     const { productoId } = req.params;
-    const { nuevoStock, operacion } = req.body;
+    const { stock, adminPassword } = req.body;
 
-    if (!nuevoStock && !operacion) {
+    console.log(
+      `🔄 [INVENTARIO] Actualizando stock BIDIRECCIONAL: ${productoId} -> ${stock}`
+    );
+
+    if (!stock && stock !== 0) {
       return res.status(400).json({
-        error: "Se requiere nuevoStock o operación",
+        ok: false,
+        error: "El campo 'stock' es requerido",
       });
     }
 
-    res.json({
-      message: "Stock actualizado exitosamente",
+    // ✅ VERIFICAR QUE EL PRODUCTO EXISTA
+    const producto = await Producto.findById(productoId);
+    if (!producto) {
+      return res.status(404).json({
+        ok: false,
+        error: "Producto no encontrado",
+      });
+    }
+
+    const stockNum = parseInt(stock);
+
+    // ✅ VERIFICAR PERMISOS SI EL USUARIO NO ES ADMIN
+    if (req.uid) {
+      try {
+        const usuarioResult = await db.query(
+          "SELECT rol FROM users WHERE id = ? AND activo = true",
+          [req.uid]
+        );
+
+        const usuario = usuarioResult.rows ? usuarioResult.rows[0] : null;
+
+        if (usuario && usuario.rol !== "admin") {
+          console.log(
+            "🔐 Usuario no es admin, validando contraseña de admin..."
+          );
+
+          if (!adminPassword) {
+            return res.status(403).json({
+              ok: false,
+              error:
+                "Se requiere autorización de administrador para actualizar stock",
+            });
+          }
+
+          // Verificar contraseña de administrador
+          const adminUserResult = await db.query(
+            "SELECT * FROM users WHERE rol = 'admin' AND activo = true LIMIT 1"
+          );
+
+          const adminUser = adminUserResult.rows
+            ? adminUserResult.rows[0]
+            : null;
+
+          if (!adminUser) {
+            return res.status(400).json({
+              ok: false,
+              error:
+                "No hay administradores en el sistema para validar esta acción",
+            });
+          }
+
+          // ✅ VERIFICAR CONTRASEÑA
+          const validAdminPassword = await bcrypt.compare(
+            adminPassword,
+            adminUser.password_hash
+          );
+
+          if (!validAdminPassword) {
+            return res.status(400).json({
+              ok: false,
+              error: "Contraseña de administrador incorrecta",
+            });
+          }
+        }
+      } catch (userError) {
+        console.error("❌ Error verificando permisos:", userError);
+      }
+    }
+
+    // ✅ CRÍTICO: ACTUALIZAR PRIMERO LA TABLA PRODUCTOS
+    console.log("💾 Actualizando stock en tabla PRODUCTOS...");
+    const resultadoProducto = await Producto.actualizarStock(
       productoId,
-      stock_anterior: 0,
-      stock_nuevo: nuevoStock || 50,
+      stockNum
+    );
+
+    if (!resultadoProducto) {
+      throw new Error("No se pudo actualizar stock en productos");
+    }
+
+    // ✅ LUEGO ACTUALIZAR LA TABLA INVENTARIO
+    console.log("📊 Actualizando stock en tabla INVENTARIO...");
+    const resultadoInventario = await Inventario.createOrUpdate(productoId, {
+      stock_actual: stockNum, // ✅ MISMO VALOR
+    });
+
+    if (!resultadoInventario) {
+      throw new Error("No se pudo actualizar el inventario");
+    }
+
+    // ✅ OBTENER DATOS ACTUALIZADOS DE AMBAS TABLAS
+    const productoActualizado = await Producto.findById(productoId);
+    const inventarioActualizado = await Inventario.findByProductoId(productoId);
+
+    console.log(
+      `✅ [INVENTARIO] Stock actualizado BIDIRECCIONAL: ${productoId} -> ${stock}`
+    );
+
+    res.json({
+      ok: true,
+      message: "Stock actualizado exitosamente en ambas tablas",
+      productoId,
+      stock_anterior: producto.stock,
+      stock_nuevo: stockNum,
+      producto: productoActualizado,
+      inventario: inventarioActualizado,
     });
   } catch (error) {
-    console.error("Error al actualizar stock:", error);
+    console.error("❌ Error al actualizar stock bidireccional:", error);
     res.status(500).json({
-      error: "Error interno al actualizar stock",
+      ok: false,
+      error: error.message || "Error interno al actualizar stock",
     });
   }
 };
 
 export const obtenerProductosBajoStock = async (req, res) => {
   try {
-    const { limite = 10 } = req.query;
+    const productosBajoStock = await Inventario.findStockBajo();
 
-    const productosBajoStock = [];
+    console.log(
+      `⚠️ [CONTROLLER] Productos bajo stock: ${productosBajoStock.length}`
+    );
 
     res.json({
+      ok: true,
       productos: productosBajoStock,
       total: productosBajoStock.length,
     });
   } catch (error) {
-    console.error("Error al obtener productos bajo stock:", error);
+    console.error("❌ Error al obtener productos bajo stock:", error);
     res.status(500).json({
+      ok: false,
       error: "Error interno al obtener productos bajo stock",
     });
   }
 };
 
+// ✅ FUNCIÓN DE SINCRONIZACIÓN
 export const sincronizarInventario = async (req, res) => {
   try {
     const { cambios } = req.body;
 
     console.log(
-      `Sincronizando ${cambios?.length || 0} cambios de inventario...`
+      `🔄 [CONTROLLER] Sincronizando ${
+        cambios?.length || 0
+      } cambios de inventario...`
     );
 
+    let cambiosProcesados = 0;
+    let errores = [];
+
+    if (cambios && Array.isArray(cambios)) {
+      for (const cambio of cambios) {
+        try {
+          const { producto_id, stock_actual, stock_minimo, operacion } = cambio;
+
+          if (operacion === "actualizar" && producto_id) {
+            // ✅ SINCRONIZAR AMBAS TABLAS
+            await Producto.actualizarStock(producto_id, parseInt(stock_actual));
+            await Inventario.createOrUpdate(producto_id, {
+              stock_actual: parseInt(stock_actual),
+              stock_minimo: parseInt(stock_minimo || 5),
+            });
+            cambiosProcesados++;
+          }
+        } catch (error) {
+          console.error(`❌ Error procesando cambio:`, cambio, error);
+          errores.push({
+            producto_id: cambio.producto_id,
+            error: error.message,
+          });
+        }
+      }
+    }
+
     res.json({
+      ok: true,
       message: "Inventario sincronizado exitosamente",
-      cambios_procesados: cambios?.length || 0,
+      cambios_procesados: cambiosProcesados,
+      total_cambios: cambios?.length || 0,
+      errores: errores.length > 0 ? errores : undefined,
     });
   } catch (error) {
-    console.error("Error en sincronización de inventario:", error);
+    console.error("❌ Error en sincronización de inventario:", error);
     res.status(500).json({
+      ok: false,
       error: "Error durante la sincronización del inventario",
+    });
+  }
+};
+
+// ✅ NUEVA FUNCIÓN: Sincronizar todos los productos con inventario
+export const sincronizarProductosConInventario = async (req, res) => {
+  try {
+    console.log("🔄 INICIANDO SINCRONIZACIÓN PRODUCTOS ↔ INVENTARIO");
+
+    // Obtener todos los productos activos
+    const productos = await Producto.findAll({ activo: true });
+    console.log(`📦 Productos a sincronizar: ${productos.length}`);
+
+    let sincronizados = 0;
+    let errores = [];
+
+    for (const producto of productos) {
+      try {
+        console.log(
+          `🔄 Sincronizando producto: ${producto.nombre} (Stock: ${producto.stock})`
+        );
+
+        // Sincronizar inventario con los valores del producto
+        await Inventario.createOrUpdate(producto.id, {
+          stock_actual: producto.stock,
+          stock_minimo: producto.stock_minimo || 5,
+        });
+
+        sincronizados++;
+        console.log(`✅ Producto sincronizado: ${producto.nombre}`);
+      } catch (error) {
+        console.error(`❌ Error sincronizando ${producto.nombre}:`, error);
+        errores.push({
+          producto: producto.nombre,
+          error: error.message,
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      message: `Sincronización completada: ${sincronizados} productos sincronizados`,
+      total_productos: productos.length,
+      sincronizados,
+      errores: errores.length > 0 ? errores : undefined,
+    });
+  } catch (error) {
+    console.error("❌ Error en sincronización masiva:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error durante la sincronización masiva",
+    });
+  }
+};
+
+// ✅ NUEVA FUNCIÓN: Verificar inconsistencias
+export const verificarInconsistencias = async (req, res) => {
+  try {
+    console.log("🔍 VERIFICANDO INCONSISTENCIAS ENTRE PRODUCTOS E INVENTARIO");
+
+    const sql = `
+      SELECT 
+        p.id,
+        p.nombre,
+        p.stock as stock_producto,
+        i.stock_actual as stock_inventario,
+        p.stock_minimo as minimo_producto,
+        i.stock_minimo as minimo_inventario,
+        CASE 
+          WHEN p.stock != i.stock_actual THEN 'STOCK_DIFERENTE'
+          WHEN p.stock_minimo != i.stock_minimo THEN 'MINIMO_DIFERENTE'
+          ELSE 'OK'
+        END as estado
+      FROM productos p
+      LEFT JOIN inventario i ON p.id = i.producto_id
+      WHERE p.activo = true
+      ORDER BY estado DESC
+    `;
+
+    const result = await db.query(sql);
+    const inconsistencias = result.rows.filter((row) => row.estado !== "OK");
+
+    res.json({
+      ok: true,
+      total_productos: result.rows.length,
+      inconsistencias: inconsistencias.length,
+      detalles: result.rows,
+    });
+  } catch (error) {
+    console.error("❌ Error verificando inconsistencias:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error al verificar inconsistencias",
     });
   }
 };
