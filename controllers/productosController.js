@@ -235,6 +235,26 @@ export const actualizarProducto = async (req, res) => {
     const { id } = req.params;
     console.log("🔄 [BACKEND] Actualizando producto ID:", id);
 
+    // ✅ DEBUG DETALLADO DE LO QUE LLEGA
+    console.log("🔍 [BACKEND] Headers:", req.headers);
+    console.log("🔍 [BACKEND] Content-Type:", req.headers["content-type"]);
+    console.log("🔍 [BACKEND] Body keys:", Object.keys(req.body));
+    console.log("🔍 [BACKEND] Body completo:", req.body);
+    console.log("🔍 [BACKEND] File:", req.file);
+
+    // ✅ DETECTAR SI ES FormData O JSON
+    let bodyData = req.body;
+
+    // Si el body está vacío pero hay multipart, usar los fields
+    if (Object.keys(req.body).length === 0 && req.file) {
+      console.log("📤 Detectado FormData, usando req.body fields");
+      bodyData = req.body;
+    }
+
+    console.log("🔍 Body recibido:", bodyData);
+    console.log("📤 File recibido:", req.file ? "Sí" : "No");
+
+    // ✅ EXTRAER DATOS DE bodyData (funciona para ambos casos)
     const {
       nombre,
       precio,
@@ -244,10 +264,12 @@ export const actualizarProducto = async (req, res) => {
       descripcion,
       stock_minimo,
       activo,
-    } = req.body;
+    } = bodyData;
 
-    console.log("🔍 VALORES RECIBIDOS PARA ACTUALIZAR:");
+    console.log("🎯 VALORES RECIBIDOS PARA ACTUALIZAR:");
+    console.log("   nombre:", nombre);
     console.log("   stock:", stock);
+    console.log("   activo:", activo);
 
     // ✅ VALIDACIONES RÁPIDAS
     if (!nombre || nombre.trim().length === 0) {
@@ -308,14 +330,16 @@ export const actualizarProducto = async (req, res) => {
       }
     }
 
-    // ✅ PREPARAR ACTUALIZACIONES
+    // ✅ PREPARAR ACTUALIZACIONES - CONVERSIONES SEGURAS
     console.log("📦 Preparando actualizaciones...");
     const updates = {
-      nombre: nombre.trim(),
-      precio: parseFloat(precio),
-      precio_compra: parseFloat(precio_compra),
-      categoria_id: categoria_id,
-      stock: stock ? parseInt(stock) : producto.stock,
+      nombre: nombre ? nombre.trim() : producto.nombre,
+      precio: precio ? parseFloat(precio) : producto.precio,
+      precio_compra: precio_compra
+        ? parseFloat(precio_compra)
+        : producto.precio_compra,
+      categoria_id: categoria_id || producto.categoria_id,
+      stock: stock !== undefined ? parseInt(stock) : producto.stock,
       descripcion: descripcion ? descripcion.trim() : producto.descripcion,
       stock_minimo: stock_minimo
         ? parseInt(stock_minimo)
@@ -323,7 +347,10 @@ export const actualizarProducto = async (req, res) => {
       imagen_url: imagen_url,
       activo:
         activo !== undefined
-          ? activo === "1" || activo === "true" || activo === true
+          ? activo === "1" ||
+            activo === "true" ||
+            activo === true ||
+            activo === 1
           : producto.activo,
     };
 
@@ -359,7 +386,7 @@ export const actualizarProducto = async (req, res) => {
 
     res.json({
       ok: true,
-      product: {
+      producto: {
         ...productoActualizado,
         inventario: inventarioActualizado,
       },
