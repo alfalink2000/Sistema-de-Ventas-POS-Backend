@@ -39,6 +39,35 @@ export const obtenerProductos = async (req, res) => {
   }
 };
 
+// ✅ BUSCAR PRODUCTOS - AGREGAR AL controllers/productosController.js
+export const buscarProductos = async (req, res) => {
+  try {
+    const { q, categoria_id } = req.query;
+
+    if (!q || q.trim() === "") {
+      return res.status(400).json({
+        ok: false,
+        msg: "Término de búsqueda requerido",
+      });
+    }
+
+    const productos = await Producto.buscar(q.trim(), categoria_id);
+
+    res.json({
+      ok: true,
+      termino: q,
+      resultados: productos.length,
+      productos,
+    });
+  } catch (error) {
+    console.error("Error al buscar productos:", error);
+    res.status(500).json({
+      ok: false,
+      msg: "Error interno al buscar productos",
+    });
+  }
+};
+
 export const obtenerProductoPorId = async (req, res) => {
   try {
     const { id } = req.params;
@@ -402,50 +431,59 @@ export const actualizarProducto = async (req, res) => {
   }
 };
 
+// ✅ ELIMINAR PRODUCTO - VERSIÓN COMPLETA CON INVENTARIO
+// ✅ VERSIÓN CORREGIDA - SIN TRANSACCIONES
 export const eliminarProducto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // ✅ ELIMINAR LÓGICAMENTE EL PRODUCTO
-    await Producto.delete(id);
+    console.log(`🗑️ [BACKEND] Eliminando producto ID: ${id}`);
+
+    // ✅ VERIFICAR SI EL PRODUCTO EXISTE
+    const producto = await Producto.findById(id);
+    if (!producto) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Producto no encontrado",
+      });
+    }
+
+    // ✅ 1. ELIMINAR LÓGICAMENTE EL PRODUCTO (soft delete)
+    console.log(`🔄 Marcando producto como eliminado: ${id}`);
+    const resultProducto = await Producto.delete(id);
+
+    if (!resultProducto) {
+      throw new Error("Error al eliminar producto");
+    }
+
+    // ✅ 2. ELIMINAR REGISTRO DEL INVENTARIO
+    console.log(`🗑️ Eliminando inventario del producto: ${id}`);
+    try {
+      const resultInventario = await Inventario.deleteByProductoId(id);
+
+      if (!resultInventario) {
+        console.warn(`⚠️ No se encontró inventario para producto: ${id}`);
+        // No es crítico si no hay inventario
+      } else {
+        console.log(`✅ Inventario eliminado: ${id}`);
+      }
+    } catch (inventarioError) {
+      console.warn(`⚠️ Error eliminando inventario:`, inventarioError);
+      // Continuamos aunque falle el inventario
+    }
+
+    console.log(`✅ [BACKEND] Producto eliminado exitosamente: ${id}`);
 
     res.json({
       ok: true,
       msg: "Producto eliminado exitosamente",
     });
   } catch (error) {
-    console.error("Error al eliminar producto:", error);
+    console.error("❌ Error al eliminar producto:", error);
+
     res.status(500).json({
       ok: false,
-      msg: "Error interno al eliminar producto",
-    });
-  }
-};
-
-export const buscarProductos = async (req, res) => {
-  try {
-    const { q, categoria_id } = req.query;
-
-    if (!q || q.trim() === "") {
-      return res.status(400).json({
-        ok: false,
-        msg: "Término de búsqueda requerido",
-      });
-    }
-
-    const productos = await Producto.buscar(q.trim(), categoria_id);
-
-    res.json({
-      ok: true,
-      termino: q,
-      resultados: productos.length,
-      productos,
-    });
-  } catch (error) {
-    console.error("Error al buscar productos:", error);
-    res.status(500).json({
-      ok: false,
-      msg: "Error interno al buscar productos",
+      msg: "Error interno al eliminar producto: " + error.message,
     });
   }
 };

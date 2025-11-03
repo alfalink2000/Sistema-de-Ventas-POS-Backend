@@ -158,14 +158,27 @@ export class Inventario {
   }
 
   // ✅ ELIMINAR INVENTARIO (POR PRODUCTO)
-  static async deleteByProductoId(producto_id) {
+  // ✅ AGREGAR MÉTODO PARA ELIMINAR POR PRODUCTO
+  static async deleteByProductoId(productoId) {
     try {
-      const sql = "DELETE FROM inventario WHERE producto_id = ?";
-      const result = await db.query(sql, [producto_id]);
-      return result;
+      console.log(
+        `🗑️ [INVENTARIO] Eliminando inventario para producto: ${productoId}`
+      );
+
+      const result = await db.query(
+        "DELETE FROM inventario WHERE producto_id = ?",
+        [productoId]
+      );
+
+      const affectedRows = result.rows
+        ? result.rows.affectedRows
+        : result.affectedRows;
+      console.log(`✅ [INVENTARIO] Filas afectadas: ${affectedRows}`);
+
+      return affectedRows > 0;
     } catch (error) {
-      console.error("Error en Inventario.deleteByProductoId:", error);
-      throw error;
+      console.error(`❌ Error eliminando inventario:`, error);
+      return false;
     }
   }
 
