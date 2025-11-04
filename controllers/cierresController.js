@@ -97,7 +97,84 @@ export const crearCierreCaja = async (req, res) => {
     });
   }
 };
+// ✅ AGREGAR en el backend (controllers/cierresController.js)
+export const diagnosticarCierre = async (req, res) => {
+  try {
+    console.log("🔍 [DIAGNÓSTICO CIERRE] Datos recibidos:", req.body);
 
+    const datosCierre = req.body;
+
+    // Validar campos requeridos
+    const camposRequeridos = [
+      "sesion_caja_id",
+      "saldo_final_real",
+      "vendedor_id",
+    ];
+    const camposFaltantes = camposRequeridos.filter(
+      (campo) => !datosCierre[campo]
+    );
+
+    if (camposFaltantes.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `Campos requeridos faltantes: ${camposFaltantes.join(", ")}`,
+      });
+    }
+
+    // Verificar tipos de datos
+    const erroresTipo = [];
+    if (typeof datosCierre.saldo_final_real !== "number") {
+      erroresTipo.push("saldo_final_real debe ser número");
+    }
+    if (typeof datosCierre.vendedor_id !== "string") {
+      erroresTipo.push("vendedor_id debe ser string");
+    }
+
+    if (erroresTipo.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `Errores de tipo: ${erroresTipo.join(", ")}`,
+      });
+    }
+
+    // Verificar si la sesión existe
+    try {
+      const sesion = await SesionCaja.getById(datosCierre.sesion_caja_id);
+      if (!sesion) {
+        return res.status(404).json({
+          ok: false,
+          error: `Sesión no encontrada: ${datosCierre.sesion_caja_id}`,
+        });
+      }
+
+      if (sesion.estado === "cerrada") {
+        return res.status(400).json({
+          ok: false,
+          error: "La sesión ya está cerrada",
+        });
+      }
+    } catch (error) {
+      return res.status(500).json({
+        ok: false,
+        error: `Error verificando sesión: ${error.message}`,
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: "Diagnóstico completado - Datos válidos",
+      datos: datosCierre,
+      sesion_existe: true,
+      sesion_estado: "abierta",
+    });
+  } catch (error) {
+    console.error("❌ Error en diagnóstico:", error);
+    res.status(500).json({
+      ok: false,
+      error: `Error en diagnóstico: ${error.message}`,
+    });
+  }
+};
 export const obtenerCierres = async (req, res) => {
   try {
     const { limite = 100, pagina = 1 } = req.query;
