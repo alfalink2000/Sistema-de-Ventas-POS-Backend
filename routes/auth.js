@@ -8,13 +8,32 @@ import { validarJWT } from "../middlewares/validar-jwt.js";
 
 const router = Router();
 
-// POST /api/auth/login
 router.post("/login", /* validateLogin, */ login);
 
-// POST /api/auth/register
-// router.post('/register', /* validateCreateUser, */ crearUsuario);
-
-// GET /api/auth/renew
 router.get("/renew", validarJWT, renovarToken);
+
+router.get("/verify-token", validarJWT, (req, res) => {
+  try {
+    const { uid, name } = req;
+
+    console.log("✅ Token verificado para usuario:", uid);
+
+    res.json({
+      ok: true,
+      message: "Token válido",
+      usuario: {
+        id: uid,
+        nombre: name,
+        // Puedes agregar más datos si los necesitas
+      },
+    });
+  } catch (error) {
+    console.error("❌ Error en verify-token:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error verificando token",
+    });
+  }
+});
 
 export default router;

@@ -1,7 +1,7 @@
 // routes/diagnostic.js
 import { Router } from "express";
 import { db } from "../database/connection.js";
-
+import { validarJWT } from "../middlewares/validar-jwt.js";
 const router = Router();
 // routes/diagnostic.js - AGREGAR ESTE ENDPOINT
 router.get("/check-cierres", async (req, res) => {
@@ -61,6 +61,44 @@ router.post("/agregar-columna-sesion", async (req, res) => {
       ok: false,
       error: "Error al agregar columna",
       details: error.message,
+    });
+  }
+});
+
+router.get("/auth-status", validarJWT, async (req, res) => {
+  try {
+    const { uid, name } = req;
+
+    // Buscar usuario completo en BD
+    const result = await db.execute(
+      "SELECT id, username, nombre, rol, email, activo FROM users WHERE id = ?",
+      [uid]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: "Usuario no encontrado",
+      });
+    }
+
+    const usuario = result.rows[0];
+
+    res.json({
+      ok: true,
+      message: "Token y usuario válidos",
+      tokenInfo: {
+        uid,
+        name,
+      },
+      userInfo: usuario,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("❌ Error en auth-status:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error verificando autenticación",
     });
   }
 });
