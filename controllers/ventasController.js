@@ -1,9 +1,138 @@
-// controllers/ventasController.js - VERSIÓN COMPLETA CON TODOS LOS EXPORTS
+// controllers/ventasController.js - VERSIÓN COMPLETA CORREGIDA
 import { Venta } from "../models/Venta.js";
 import { DetalleVenta } from "../models/DetalleVenta.js";
 import { db } from "../database/connection.js";
 
+// ✅ FUNCIÓN PARA ACTUALIZAR STOCK DE PRODUCTOS
+const actualizarStockProductos = async (productos) => {
+  try {
+    console.log("🔄 [STOCK BACKEND] Actualizando stock desde VENTA...");
+
+    for (const producto of productos) {
+      try {
+        const productoId = producto.producto_id.toString();
+        const cantidadVendida = parseInt(producto.cantidad);
+
+        console.log(
+          `📦 Actualizando stock por venta: ${productoId} -${cantidadVendida}`
+        );
+
+        // 1. Obtener producto actual
+        const productQuery = `SELECT id, nombre, stock FROM productos WHERE id = ?`;
+        const productResult = await db.execute(productQuery, [productoId]);
+
+        if (productResult.rows.length === 0) {
+          throw new Error(`Producto con ID ${productoId} no encontrado`);
+        }
+
+        const productoActual = productResult.rows[0];
+        const stockActual = parseInt(productoActual.stock) || 0;
+        const nuevoStock = Math.max(0, stockActual - cantidadVendida);
+
+        console.log(
+          `📊 Stock cálculo: ${stockActual} - ${cantidadVendida} = ${nuevoStock}`
+        );
+
+        // 2. Actualizar stock en tabla productos
+        const updateProductQuery = `UPDATE productos SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        await db.execute(updateProductQuery, [nuevoStock, productoId]);
+
+        // 3. Actualizar stock en tabla inventario
+        try {
+          const updateInventarioQuery = `UPDATE inventario SET stock_actual = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE producto_id = ?`;
+          await db.execute(updateInventarioQuery, [nuevoStock, productoId]);
+        } catch (inventarioError) {
+          console.warn(
+            `⚠️ No se pudo actualizar inventario: ${inventarioError.message}`
+          );
+          // Crear registro si no existe
+          try {
+            const createInventarioQuery = `INSERT INTO inventario (producto_id, stock_actual, stock_minimo, fecha_actualizacion) VALUES (?, ?, 5, CURRENT_TIMESTAMP)`;
+            await db.execute(createInventarioQuery, [productoId, nuevoStock]);
+          } catch (createError) {
+            console.warn(
+              `⚠️ No se pudo crear inventario: ${createError.message}`
+            );
+          }
+        }
+
+        console.log(
+          `✅ Stock actualizado por venta: ${productoActual.nombre} -> ${nuevoStock}`
+        );
+      } catch (error) {
+        console.error(
+          `❌ Error actualizando stock de ${producto.producto_id}:`,
+          error
+        );
+        throw error;
+      }
+    }
+
+    console.log("✅ [STOCK BACKEND] Todos los stocks actualizados desde venta");
+    return true;
+  } catch (error) {
+    console.error(
+      "❌ [STOCK BACKEND] Error general actualizando stock desde venta:",
+      error
+    );
+    throw error;
+  }
+};
+
+// ✅ FUNCIÓN PARA REVERTIR STOCK EN CASO DE ERROR
+const revertirStockProductos = async (productos) => {
+  try {
+    console.log("🔄 [STOCK BACKEND] Revirtiendo stock debido a error...");
+
+    for (const producto of productos) {
+      try {
+        const productoId = producto.producto_id.toString();
+        const cantidadVendida = parseInt(producto.cantidad);
+
+        // Obtener producto actual
+        const productQuery = `SELECT id, nombre, stock FROM productos WHERE id = ?`;
+        const productResult = await db.execute(productQuery, [productoId]);
+
+        if (productResult.rows.length === 0) {
+          console.error(
+            `❌ Producto no encontrado para revertir: ${productoId}`
+          );
+          continue;
+        }
+
+        const productoActual = productResult.rows[0];
+        const stockActual = parseInt(productoActual.stock) || 0;
+        const nuevoStock = stockActual + cantidadVendida; // Revertir sumando
+
+        console.log(
+          `📊 Stock revertido: ${stockActual} + ${cantidadVendida} = ${nuevoStock}`
+        );
+
+        // Actualizar stock
+        const updateProductQuery = `UPDATE productos SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+        await db.execute(updateProductQuery, [nuevoStock, productoId]);
+
+        console.log(
+          `✅ Stock revertido: ${productoActual.nombre} -> ${nuevoStock}`
+        );
+      } catch (error) {
+        console.error(
+          `❌ Error revirtiendo stock de ${producto.producto_id}:`,
+          error
+        );
+      }
+    }
+
+    console.log("✅ [STOCK BACKEND] Stock revertido completamente");
+  } catch (error) {
+    console.error("❌ [STOCK BACKEND] Error general revirtiendo stock:", error);
+  }
+};
+
+// ✅ FUNCIÓN PRINCIPAL CREAR VENTA - COMPLETAMENTE CORREGIDA
 export const crearVenta = async (req, res) => {
+  let ventaId = null;
+
   try {
     console.log("📥 [BACKEND] Datos recibidos en crearVenta:", req.body);
 
@@ -16,6 +145,8 @@ export const crearVenta = async (req, res) => {
       efectivo_recibido,
       cambio,
       estado,
+      es_offline = false,
+      id_local = null,
     } = req.body;
 
     // ✅ VALIDACIONES MEJORADAS
@@ -44,10 +175,10 @@ export const crearVenta = async (req, res) => {
       });
     }
 
-    // ✅ VERIFICAR QUE LOS PRODUCTOS EXISTAN EN LA BD
+    // ✅ VERIFICAR QUE LOS PRODUCTOS EXISTEN EN LA BD Y TIENEN STOCK
     try {
       for (const producto of productos) {
-        const productQuery = `SELECT id, nombre, precio FROM productos WHERE id = ?`;
+        const productQuery = `SELECT id, nombre, precio, stock FROM productos WHERE id = ?`;
         const productResult = await db.execute(productQuery, [
           producto.producto_id.toString(),
         ]);
@@ -61,9 +192,20 @@ export const crearVenta = async (req, res) => {
             error: `El producto con ID ${producto.producto_id} no existe en la base de datos`,
           });
         } else {
+          // ✅ VERIFICAR STOCK DISPONIBLE
+          const productoBD = productResult.rows[0];
+          const stockDisponible = parseInt(productoBD.stock) || 0;
+          const cantidadRequerida = parseInt(producto.cantidad) || 0;
+
+          if (stockDisponible < cantidadRequerida) {
+            return res.status(400).json({
+              ok: false,
+              error: `Stock insuficiente para ${productoBD.nombre}: ${stockDisponible} disponible, ${cantidadRequerida} requerido`,
+            });
+          }
+
           console.log(
-            `✅ [BACKEND] Producto verificado:`,
-            productResult.rows[0]
+            `✅ [BACKEND] Producto verificado: ${productoBD.nombre}, Stock: ${stockDisponible}`
           );
         }
       }
@@ -111,17 +253,23 @@ export const crearVenta = async (req, res) => {
         : null,
       cambio: cambio ? parseFloat(cambio) : null,
       estado: estado || "completada",
+      es_offline: es_offline,
+      id_local: id_local,
     };
 
     console.log("🔄 [BACKEND] Creando venta con datos:", ventaData);
 
-    let ventaId;
     try {
+      // ✅ PRIMERO: ACTUALIZAR STOCK DE PRODUCTOS
+      console.log("🔄 [BACKEND] Actualizando stock de productos...");
+      await actualizarStockProductos(productos);
+      console.log("✅ [BACKEND] Stock de productos actualizado");
+
       // 1. Crear la venta
       ventaId = await Venta.create(ventaData);
 
       if (!ventaId) {
-        throw new Error("Error al crear la venta");
+        throw new Error("Error al crear la venta - no se obtuvo ID");
       }
 
       console.log("✅ [BACKEND] Venta creada con ID:", ventaId);
@@ -135,6 +283,7 @@ export const crearVenta = async (req, res) => {
         subtotal: parseFloat(
           producto.subtotal || producto.cantidad * producto.precio_unitario
         ),
+        producto_nombre: producto.nombre || producto.producto_nombre,
       }));
 
       console.log("🔄 [BACKEND] Creando detalles de venta:", detallesData);
@@ -144,8 +293,12 @@ export const crearVenta = async (req, res) => {
     } catch (error) {
       console.error("❌ [BACKEND] Error durante la creación:", error);
 
-      // Si falla, eliminar la venta creada (si se llegó a crear)
+      // ✅ REVERTIR STOCK SI HUBO ERROR DESPUÉS DE ACTUALIZAR STOCK
       if (ventaId) {
+        console.log("🔄 [BACKEND] Revertiendo stock debido a error...");
+        await revertirStockProductos(productos);
+
+        // Eliminar la venta creada
         await Venta.deleteById(ventaId);
         console.log("🗑️ [BACKEND] Venta eliminada debido a error");
       }
@@ -153,6 +306,7 @@ export const crearVenta = async (req, res) => {
       return res.status(500).json({
         ok: false,
         error: "Error al procesar la venta: " + error.message,
+        details: error.stack,
       });
     }
 
@@ -165,9 +319,16 @@ export const crearVenta = async (req, res) => {
       ...ventaData,
       productos: detalles.rows || [],
       fecha_venta: ventaCreada?.fecha_venta || new Date().toISOString(),
+      // ✅ INCLUIR REFERENCIA LOCAL SI EXISTE
+      ...(id_local && { id_local }),
     };
 
-    console.log("✅ [BACKEND] Venta completada exitosamente:", ventaId);
+    console.log("✅ [BACKEND] Venta completada exitosamente:", {
+      ventaId,
+      total: ventaData.total,
+      productos: productos.length,
+      sesion: ventaData.sesion_caja_id,
+    });
 
     res.status(201).json({
       ok: true,
@@ -176,6 +337,13 @@ export const crearVenta = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ [BACKEND] Error en crearVenta:", error);
+
+    // ✅ REVERTIR STOCK EN CASO DE ERROR GENERAL
+    if (ventaId && productos) {
+      console.log("🔄 [BACKEND] Revertiendo stock por error general...");
+      await revertirStockProductos(productos);
+    }
+
     res.status(500).json({
       ok: false,
       error: "Error interno al procesar la venta",
@@ -184,15 +352,21 @@ export const crearVenta = async (req, res) => {
   }
 };
 
+// ✅ OBTENER VENTAS
 export const obtenerVentas = async (req, res) => {
   try {
     console.log("📥 [BACKEND] GET /api/ventas recibida");
-    const { limite = 50, pagina = 1 } = req.query;
+    const { limite = 50, pagina = 1, sesion_id } = req.query;
 
-    const ventas = await Venta.findAll({
-      limite: parseInt(limite),
-      pagina: parseInt(pagina),
-    });
+    let ventas;
+    if (sesion_id) {
+      ventas = await Venta.findBySesionCaja(sesion_id);
+    } else {
+      ventas = await Venta.findAll({
+        limite: parseInt(limite),
+        pagina: parseInt(pagina),
+      });
+    }
 
     console.log(`📤 [BACKEND] Enviando ${ventas.length} ventas`);
 
@@ -214,6 +388,7 @@ export const obtenerVentas = async (req, res) => {
   }
 };
 
+// ✅ OBTENER VENTA POR ID
 export const obtenerVentaPorId = async (req, res) => {
   try {
     const { id } = req.params;
@@ -249,6 +424,7 @@ export const obtenerVentaPorId = async (req, res) => {
   }
 };
 
+// ✅ OBTENER VENTAS POR SESIÓN
 export const obtenerVentasPorSesion = async (req, res) => {
   try {
     const { sesionId } = req.params;
@@ -271,7 +447,7 @@ export const obtenerVentasPorSesion = async (req, res) => {
   }
 };
 
-// ✅ AGREGAR LA FUNCIÓN FALTANTE
+// ✅ OBTENER VENTAS POR FECHA
 export const obtenerVentasPorFecha = async (req, res) => {
   try {
     const { fecha } = req.params;
@@ -302,15 +478,21 @@ export const obtenerVentasPorFecha = async (req, res) => {
   }
 };
 
+// ✅ OBTENER ESTADÍSTICAS DE VENTAS
 export const obtenerEstadisticasVentas = async (req, res) => {
   try {
-    const { fecha_inicio, fecha_fin } = req.query;
+    const { fecha_inicio, fecha_fin, sesion_id } = req.query;
 
     console.log(
       `📊 [BACKEND] Obteniendo estadísticas desde ${fecha_inicio} hasta ${fecha_fin}`
     );
 
     let ventas = await Venta.findAll();
+
+    // Filtrar por sesión si se proporciona
+    if (sesion_id) {
+      ventas = ventas.filter((venta) => venta.sesion_caja_id == sesion_id);
+    }
 
     // Filtrar por fecha si se proporciona
     if (fecha_inicio && fecha_fin) {
@@ -367,7 +549,10 @@ export const obtenerEstadisticasVentas = async (req, res) => {
   }
 };
 
+// ✅ CANCELAR VENTA
 export const cancelarVenta = async (req, res) => {
+  let transaction = null;
+
   try {
     const { id } = req.params;
     const { motivo } = req.body;
@@ -389,6 +574,35 @@ export const cancelarVenta = async (req, res) => {
       });
     }
 
+    // ✅ OBTENER DETALLES DE LA VENTA PARA REVERTIR STOCK
+    const detalles = await DetalleVenta.findByVentaId(id);
+
+    if (detalles.rows && detalles.rows.length > 0) {
+      console.log("🔄 [BACKEND] Revertiendo stock por cancelación...");
+
+      // Revertir stock de cada producto
+      for (const detalle of detalles.rows) {
+        const productQuery = `SELECT id, nombre, stock FROM productos WHERE id = ?`;
+        const productResult = await db.execute(productQuery, [
+          detalle.producto_id,
+        ]);
+
+        if (productResult.rows.length > 0) {
+          const producto = productResult.rows[0];
+          const stockActual = parseInt(producto.stock) || 0;
+          const nuevoStock = stockActual + parseInt(detalle.cantidad);
+
+          const updateQuery = `UPDATE productos SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
+          await db.execute(updateQuery, [nuevoStock, detalle.producto_id]);
+
+          console.log(
+            `✅ Stock revertido: ${producto.nombre} +${detalle.cantidad} = ${nuevoStock}`
+          );
+        }
+      }
+    }
+
+    // Actualizar estado de la venta
     const success = await Venta.updateEstado(id, "cancelada");
 
     if (!success) {
@@ -400,6 +614,11 @@ export const cancelarVenta = async (req, res) => {
     res.json({
       ok: true,
       message: "Venta cancelada exitosamente",
+      venta: {
+        ...venta,
+        estado: "cancelada",
+        motivo_cancelacion: motivo,
+      },
     });
   } catch (error) {
     console.error("❌ [BACKEND] Error en cancelarVenta:", error);
@@ -410,7 +629,7 @@ export const cancelarVenta = async (req, res) => {
   }
 };
 
-// ✅ AGREGAR FUNCIÓN DE SINCRONIZACIÓN SI FALTA
+// ✅ SINCRONIZAR VENTAS OFFLINE
 export const sincronizarVentasOffline = async (req, res) => {
   try {
     const { ventas } = req.body; // Array de ventas creadas offline
@@ -435,8 +654,14 @@ export const sincronizarVentasOffline = async (req, res) => {
     // Procesar cada venta offline
     for (const venta of ventas) {
       try {
+        console.log(`🔄 Procesando venta offline: ${venta.id_local}`);
+
         // Crear venta en la base de datos
-        const ventaId = await Venta.create(venta);
+        const ventaId = await Venta.create({
+          ...venta,
+          es_offline: true,
+          id_local: venta.id_local,
+        });
 
         if (venta.productos && Array.isArray(venta.productos)) {
           const detallesData = venta.productos.map((producto) => ({
@@ -445,6 +670,7 @@ export const sincronizarVentasOffline = async (req, res) => {
             cantidad: producto.cantidad,
             precio_unitario: producto.precio_unitario,
             subtotal: producto.subtotal,
+            producto_nombre: producto.nombre,
           }));
 
           await DetalleVenta.createBatch(detallesData);
@@ -456,6 +682,10 @@ export const sincronizarVentasOffline = async (req, res) => {
           id_cloud: ventaId,
           status: "success",
         });
+
+        console.log(
+          `✅ Venta offline sincronizada: ${venta.id_local} -> ${ventaId}`
+        );
       } catch (error) {
         resultados.fallidas++;
         resultados.detalles.push({
@@ -463,6 +693,7 @@ export const sincronizarVentasOffline = async (req, res) => {
           status: "failed",
           error: error.message,
         });
+        console.error(`❌ Error sincronizando venta ${venta.id_local}:`, error);
       }
     }
 
@@ -477,6 +708,57 @@ export const sincronizarVentasOffline = async (req, res) => {
       ok: false,
       error: "Error durante la sincronización",
       details: error.message,
+    });
+  }
+};
+
+// ✅ OBTENER GANANCIAS POR SESIÓN
+export const obtenerGananciasSesion = async (req, res) => {
+  try {
+    const { sesionId } = req.params;
+    console.log(`💰 [BACKEND] Obteniendo ganancias para sesión: ${sesionId}`);
+
+    const ventas = await Venta.findBySesionCaja(sesionId);
+
+    let totalVentas = 0;
+    let gananciaBruta = 0;
+    let cantidadVentas = 0;
+
+    for (const venta of ventas) {
+      if (venta.estado !== "cancelada") {
+        totalVentas += parseFloat(venta.total) || 0;
+        cantidadVentas++;
+
+        // Calcular ganancia basada en detalles si están disponibles
+        if (venta.productos && Array.isArray(venta.productos)) {
+          const gananciaVenta = venta.productos.reduce((sum, producto) => {
+            const precioVenta = parseFloat(producto.precio_unitario) || 0;
+            const cantidad = parseInt(producto.cantidad) || 0;
+            const costo = precioVenta * 0.8; // 20% de ganancia estimada
+            return sum + (precioVenta - costo) * cantidad;
+          }, 0);
+          gananciaBruta += gananciaVenta;
+        } else {
+          // Estimación si no hay detalles
+          gananciaBruta += (parseFloat(venta.total) || 0) * 0.25; // 25% de margen
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      ganancias: {
+        total_ventas: Math.round(totalVentas * 100) / 100,
+        ganancia_bruta: Math.round(gananciaBruta * 100) / 100,
+        cantidad_ventas: cantidadVentas,
+        sesion_id: sesionId,
+      },
+    });
+  } catch (error) {
+    console.error("❌ [BACKEND] Error en obtenerGananciasSesion:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error al calcular ganancias",
     });
   }
 };

@@ -30,10 +30,10 @@ export const obtenerInventario = async (req, res) => {
 export const actualizarStock = async (req, res) => {
   try {
     const { productoId } = req.params;
-    const { stock, adminPassword } = req.body;
+    const { stock, adminPassword, origen = "manual" } = req.body;
 
     console.log(
-      `🔄 [INVENTARIO] Actualizando stock BIDIRECCIONAL: ${productoId} -> ${stock}`
+      `🔄 [INVENTARIO] Actualizando stock: ${productoId} -> ${stock} (Origen: ${origen})`
     );
 
     if (!stock && stock !== 0) {
@@ -54,8 +54,8 @@ export const actualizarStock = async (req, res) => {
 
     const stockNum = parseInt(stock);
 
-    // ✅ VERIFICAR PERMISOS SI EL USUARIO NO ES ADMIN
-    if (req.uid) {
+    // ✅ VERIFICAR PERMISOS (solo si no es una actualización automática desde venta)
+    if (origen !== "venta" && req.uid) {
       try {
         const usuarioResult = await db.query(
           "SELECT rol FROM users WHERE id = ? AND activo = true",
@@ -112,8 +112,8 @@ export const actualizarStock = async (req, res) => {
       }
     }
 
-    // ✅ CRÍTICO: ACTUALIZAR PRIMERO LA TABLA PRODUCTOS
-    console.log("💾 Actualizando stock en tabla PRODUCTOS...");
+    // ✅ SINCRONIZACIÓN BIDIRECCIONAL: ACTUALIZAR AMBAS TABLAS
+    console.log("💾 Sincronizando stock en PRODUCTOS...");
     const resultadoProducto = await Producto.actualizarStock(
       productoId,
       stockNum
@@ -123,38 +123,41 @@ export const actualizarStock = async (req, res) => {
       throw new Error("No se pudo actualizar stock en productos");
     }
 
-    // ✅ LUEGO ACTUALIZAR LA TABLA INVENTARIO
-    console.log("📊 Actualizando stock en tabla INVENTARIO...");
+    console.log("📊 Sincronizando stock en INVENTARIO...");
     const resultadoInventario = await Inventario.createOrUpdate(productoId, {
-      stock_actual: stockNum, // ✅ MISMO VALOR
+      stock_actual: stockNum,
+      fecha_actualizacion: new Date().toISOString(),
     });
 
     if (!resultadoInventario) {
       throw new Error("No se pudo actualizar el inventario");
     }
 
+    console.log(
+      `✅ [INVENTARIO] Stock sincronizado: ${productoId} -> ${stockNum}`
+    );
+
     // ✅ OBTENER DATOS ACTUALIZADOS DE AMBAS TABLAS
     const productoActualizado = await Producto.findById(productoId);
     const inventarioActualizado = await Inventario.findByProductoId(productoId);
 
-    console.log(
-      `✅ [INVENTARIO] Stock actualizado BIDIRECCIONAL: ${productoId} -> ${stock}`
-    );
-
     res.json({
       ok: true,
-      message: "Stock actualizado exitosamente en ambas tablas",
+      message: "Stock sincronizado exitosamente en ambas tablas",
       productoId,
       stock_anterior: producto.stock,
       stock_nuevo: stockNum,
       producto: productoActualizado,
       inventario: inventarioActualizado,
+      sincronizado: true,
+      origen: origen,
     });
   } catch (error) {
     console.error("❌ Error al actualizar stock bidireccional:", error);
     res.status(500).json({
       ok: false,
       error: error.message || "Error interno al actualizar stock",
+      sincronizado: false,
     });
   }
 };
