@@ -1,4 +1,4 @@
-// controllers/cierresController.js - VERSIÓN COMPLETAMENTE ACTUALIZADA
+// controllers/cierresController.js - VERSIÓN COMPLETAMENTE CORREGIDA
 import { CierreCaja } from "../models/CierreCaja.js";
 import { SesionCaja } from "../models/SesionCaja.js";
 import { Venta } from "../models/Venta.js";
@@ -21,7 +21,7 @@ export const crearCierreCaja = async (req, res) => {
       vendedor_id,
     } = req.body;
 
-    // Validaciones básicas
+    // ✅ VALIDACIONES MÍNIMAS (sin verificar sesión)
     if (!sesion_caja_id) {
       return res.status(400).json({
         ok: false,
@@ -57,16 +57,28 @@ export const crearCierreCaja = async (req, res) => {
       estado: "completado",
     };
 
-    console.log("🔄 [BACKEND] Creando cierre de caja completo:", cierreData);
+    console.log(
+      "🔄 [BACKEND] Creando cierre (sin verificar sesión):",
+      cierreData
+    );
 
-    // Crear cierre en la base de datos
+    // ✅ CREAR CIERRE DIRECTAMENTE (sin verificar sesión)
     const cierreId = await CierreCaja.create(cierreData);
 
-    // ✅ ACTUALIZADO: Cerrar sesión con observaciones
-    await SesionCaja.close(sesion_caja_id, {
-      saldo_final: parseFloat(saldo_final_real),
-      observaciones: observaciones || "",
-    });
+    // ✅ INTENTAR CERRAR SESIÓN (PERO NO FALLAR SI NO EXISTE)
+    try {
+      await SesionCaja.close(sesion_caja_id, {
+        saldo_final: parseFloat(saldo_final_real),
+        observaciones: observaciones || "",
+      });
+      console.log("✅ Sesión cerrada exitosamente");
+    } catch (sessionError) {
+      console.warn(
+        "⚠️ No se pudo cerrar la sesión (posible sesión offline):",
+        sessionError.message
+      );
+      // ✅ NO FALLAR - CONTINUAR CON EL CIERRE
+    }
 
     console.log("✅ [BACKEND] Cierre de caja creado con ID:", cierreId);
 
@@ -97,6 +109,7 @@ export const crearCierreCaja = async (req, res) => {
     });
   }
 };
+
 // ✅ AGREGAR en el backend (controllers/cierresController.js)
 export const diagnosticarCierre = async (req, res) => {
   try {
@@ -137,35 +150,37 @@ export const diagnosticarCierre = async (req, res) => {
       });
     }
 
-    // Verificar si la sesión existe
+    // ✅ VERIFICAR SI LA SESIÓN EXISTE (PERO NO FALLAR)
+    let sesion_existe = false;
+    let sesion_estado = "desconocido";
+
     try {
       const sesion = await SesionCaja.getById(datosCierre.sesion_caja_id);
-      if (!sesion) {
-        return res.status(404).json({
-          ok: false,
-          error: `Sesión no encontrada: ${datosCierre.sesion_caja_id}`,
-        });
-      }
+      if (sesion) {
+        sesion_existe = true;
+        sesion_estado = sesion.estado;
 
-      if (sesion.estado === "cerrada") {
-        return res.status(400).json({
-          ok: false,
-          error: "La sesión ya está cerrada",
-        });
+        if (sesion.estado === "cerrada") {
+          return res.status(400).json({
+            ok: false,
+            error: "La sesión ya está cerrada",
+          });
+        }
       }
     } catch (error) {
-      return res.status(500).json({
-        ok: false,
-        error: `Error verificando sesión: ${error.message}`,
-      });
+      console.warn(
+        "⚠️ Sesión no encontrada (posible sesión offline):",
+        error.message
+      );
+      // No fallar, continuar con el diagnóstico
     }
 
     res.json({
       ok: true,
       message: "Diagnóstico completado - Datos válidos",
       datos: datosCierre,
-      sesion_existe: true,
-      sesion_estado: "abierta",
+      sesion_existe: sesion_existe,
+      sesion_estado: sesion_estado,
     });
   } catch (error) {
     console.error("❌ Error en diagnóstico:", error);
@@ -175,6 +190,7 @@ export const diagnosticarCierre = async (req, res) => {
     });
   }
 };
+
 export const obtenerCierres = async (req, res) => {
   try {
     const { limite = 100, pagina = 1 } = req.query;
@@ -256,7 +272,7 @@ export const calcularTotalesCierre = async (req, res) => {
       `🧮 [BACKEND] Calculando totales COMPLETOS para sesión: ${sesion_caja_id}`
     );
 
-    // ✅ USAR EL NUEVO MÉTODO CALCULARTOTALES QUE INCLUYE GANANCIAS
+    // ✅ USAR EL NUEVO MÉTODO CALCULARTOTALES QUE NO FALLA
     const totales = await CierreCaja.calcularTotales(sesion_caja_id);
 
     console.log("✅ [BACKEND] Totales completos calculados:", totales);

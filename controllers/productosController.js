@@ -1,6 +1,5 @@
-// controllers/productosController.js - VERSIÓN COMPLETA CON SINCRONIZACIÓN BIDIRECCIONAL
+// controllers/productosController.js - VERSIÓN SIN INVENTARIO
 import { Producto } from "../models/Producto.js";
-import { Inventario } from "../models/Inventario.js";
 import { uploadToImgBB } from "../services/imageService.js";
 import { db } from "../database/connection.js";
 import bcrypt from "bcrypt";
@@ -39,7 +38,7 @@ export const obtenerProductos = async (req, res) => {
   }
 };
 
-// ✅ BUSCAR PRODUCTOS - AGREGAR AL controllers/productosController.js
+// ✅ BUSCAR PRODUCTOS
 export const buscarProductos = async (req, res) => {
   try {
     const { q, categoria_id } = req.query;
@@ -80,26 +79,13 @@ export const obtenerProductoPorId = async (req, res) => {
       });
     }
 
-    // ✅ OBTENER DATOS DEL INVENTARIO
-    let inventario = null;
-    try {
-      inventario = await Inventario.findByProductoId(id);
-    } catch (inventarioError) {
-      console.warn(
-        "⚠️ No se pudo obtener datos del inventario:",
-        inventarioError
-      );
-    }
-
     res.json({
       ok: true,
       producto: {
         ...producto,
-        inventario: inventario || {
-          stock_actual: producto.stock || 0,
-          stock_minimo: producto.stock_minimo || 5,
-          ultima_actualizacion: new Date(),
-        },
+        // ✅ AHORA SOLO USA LOS DATOS DIRECTOS DEL PRODUCTO
+        stock_actual: producto.stock || 0,
+        stock_minimo: producto.stock_minimo || 5,
       },
     });
   } catch (error) {
@@ -111,7 +97,7 @@ export const obtenerProductoPorId = async (req, res) => {
   }
 };
 
-// ✅ CREAR PRODUCTO - CON SINCRONIZACIÓN BIDIRECCIONAL
+// ✅ CREAR PRODUCTO - SIN INVENTARIO
 export const crearProducto = async (req, res) => {
   try {
     console.log("🚨 ========== INICIO CREAR PRODUCTO ==========");
@@ -203,29 +189,12 @@ export const crearProducto = async (req, res) => {
     const productoId = await Producto.create(productoData);
     console.log("✅ PRODUCTO CREADO CON ID:", productoId);
 
-    // ✅ CRÍTICO: CREAR INVENTARIO CON LOS MISMOS VALORES
-    console.log("📊 Creando registro en inventario sincronizado...");
-    try {
-      await Inventario.create({
-        producto_id: productoId,
-        stock_actual: productoData.stock, // ✅ MISMO VALOR QUE PRODUCTO
-        stock_minimo: productoData.stock_minimo, // ✅ MISMO VALOR QUE PRODUCTO
-      });
-      console.log("✅ REGISTRO DE INVENTARIO CREADO Y SINCRONIZADO");
-    } catch (inventarioError) {
-      console.error("❌ Error creando inventario:", inventarioError);
-    }
-
     // ✅ OBTENER PRODUCTO COMPLETO
     const productoCompleto = await Producto.findById(productoId);
-    const inventarioRegistro = await Inventario.findByProductoId(productoId);
 
     const response = {
       ok: true,
-      producto: {
-        ...productoCompleto,
-        inventario: inventarioRegistro,
-      },
+      producto: productoCompleto,
       msg: "Producto creado exitosamente",
     };
 
@@ -258,7 +227,7 @@ export const crearProducto = async (req, res) => {
   }
 };
 
-// ✅ ACTUALIZAR PRODUCTO - CON SINCRONIZACIÓN BIDIRECCIONAL
+// ✅ ACTUALIZAR PRODUCTO - SIN INVENTARIO
 export const actualizarProducto = async (req, res) => {
   try {
     const { id } = req.params;
@@ -393,33 +362,15 @@ export const actualizarProducto = async (req, res) => {
       });
     }
 
-    // ✅ CRÍTICO: SINCRONIZAR INVENTARIO CON EL NUEVO STOCK
-    console.log("🔄 SINCRONIZANDO INVENTARIO CON PRODUCTO...");
-    console.log(`📦 Stock del producto: ${updates.stock}`);
-
-    try {
-      await Inventario.createOrUpdate(id, {
-        stock_actual: updates.stock, // ✅ MISMOS VALORES
-        stock_minimo: updates.stock_minimo, // ✅ MISMOS VALORES
-      });
-      console.log("✅ INVENTARIO SINCRONIZADO CON PRODUCTO");
-    } catch (inventarioError) {
-      console.error("❌ Error sincronizando inventario:", inventarioError);
-    }
-
-    console.log("✅ Producto e inventario actualizados exitosamente");
+    console.log("✅ Producto actualizado exitosamente");
 
     // ✅ OBTENER DATOS ACTUALIZADOS
     const productoActualizado = await Producto.findById(id);
-    const inventarioActualizado = await Inventario.findByProductoId(id);
 
     res.json({
       ok: true,
-      producto: {
-        ...productoActualizado,
-        inventario: inventarioActualizado,
-      },
-      msg: "Producto e inventario actualizados exitosamente",
+      producto: productoActualizado,
+      msg: "Producto actualizado exitosamente",
     });
   } catch (error) {
     console.error("❌ Error en actualizarProducto:", error);
@@ -431,8 +382,7 @@ export const actualizarProducto = async (req, res) => {
   }
 };
 
-// ✅ ELIMINAR PRODUCTO - VERSIÓN COMPLETA CON INVENTARIO
-// ✅ VERSIÓN CORREGIDA - SIN TRANSACCIONES
+// ✅ ELIMINAR PRODUCTO - SIN INVENTARIO
 export const eliminarProducto = async (req, res) => {
   try {
     const { id } = req.params;
@@ -448,28 +398,12 @@ export const eliminarProducto = async (req, res) => {
       });
     }
 
-    // ✅ 1. ELIMINAR LÓGICAMENTE EL PRODUCTO (soft delete)
+    // ✅ ELIMINAR LÓGICAMENTE EL PRODUCTO (soft delete)
     console.log(`🔄 Marcando producto como eliminado: ${id}`);
     const resultProducto = await Producto.delete(id);
 
     if (!resultProducto) {
       throw new Error("Error al eliminar producto");
-    }
-
-    // ✅ 2. ELIMINAR REGISTRO DEL INVENTARIO
-    console.log(`🗑️ Eliminando inventario del producto: ${id}`);
-    try {
-      const resultInventario = await Inventario.deleteByProductoId(id);
-
-      if (!resultInventario) {
-        console.warn(`⚠️ No se encontró inventario para producto: ${id}`);
-        // No es crítico si no hay inventario
-      } else {
-        console.log(`✅ Inventario eliminado: ${id}`);
-      }
-    } catch (inventarioError) {
-      console.warn(`⚠️ Error eliminando inventario:`, inventarioError);
-      // Continuamos aunque falle el inventario
     }
 
     console.log(`✅ [BACKEND] Producto eliminado exitosamente: ${id}`);
@@ -488,16 +422,13 @@ export const eliminarProducto = async (req, res) => {
   }
 };
 
-// ✅ ACTUALIZAR STOCK - CON SINCRONIZACIÓN BIDIRECCIONAL
+// ✅ ACTUALIZAR STOCK - SIN INVENTARIO
 export const actualizarStock = async (req, res) => {
   try {
     const { id } = req.params;
     const { stock, adminPassword } = req.body;
 
-    console.log(
-      "🔄 [BACKEND] Actualizando stock BIDIRECCIONAL para producto ID:",
-      id
-    );
+    console.log("🔄 [BACKEND] Actualizando stock para producto ID:", id);
 
     // ✅ VALIDACIONES BÁSICAS
     if (
@@ -579,7 +510,7 @@ export const actualizarStock = async (req, res) => {
       }
     }
 
-    // ✅ ACTUALIZAR STOCK EN PRODUCTO (TABLA productos)
+    // ✅ ACTUALIZAR STOCK EN PRODUCTO
     console.log("💾 Actualizando stock en tabla PRODUCTOS...");
     const resultProducto = await Producto.actualizarStock(id, stockNum);
 
@@ -590,30 +521,15 @@ export const actualizarStock = async (req, res) => {
       });
     }
 
-    // ✅ CRÍTICO: ACTUALIZAR INVENTARIO CON EL MISMO VALOR (TABLA inventario)
-    console.log("📊 Actualizando stock en tabla INVENTARIO...");
-    try {
-      await Inventario.createOrUpdate(id, {
-        stock_actual: stockNum, // ✅ MISMO VALOR QUE EN PRODUCTOS
-      });
-      console.log("✅ INVENTARIO ACTUALIZADO CON MISMO STOCK");
-    } catch (inventarioError) {
-      console.error("❌ Error actualizando inventario:", inventarioError);
-    }
-
-    console.log("✅ Stock actualizado BIDIRECCIONALMENTE en ambas tablas");
+    console.log("✅ Stock actualizado exitosamente");
 
     // ✅ OBTENER DATOS ACTUALIZADOS
     const productoActualizado = await Producto.findById(id);
-    const inventarioActualizado = await Inventario.findByProductoId(id);
 
     res.json({
       ok: true,
-      message: "Stock actualizado correctamente en ambas tablas",
-      product: {
-        ...productoActualizado,
-        inventario: inventarioActualizado,
-      },
+      message: "Stock actualizado correctamente",
+      product: productoActualizado,
     });
   } catch (error) {
     console.error("❌ Error en actualizarStock:", error);

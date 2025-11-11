@@ -1,4 +1,4 @@
-// routes/productos.js - ACTUALIZADO
+// routes/productos.js - SIN CAMBIOS (pero el controlador interno está actualizado)
 import { Router } from "express";
 import {
   obtenerProductos,

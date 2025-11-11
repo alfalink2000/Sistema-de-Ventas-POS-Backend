@@ -1,18 +1,77 @@
-// middlewares/security.js - CONFIGURACIÓN CORS CORREGIDA
+// middlewares/security.js - VERSIÓN CON RATE LIMITING DESACTIVADO EN DESARROLLO
+
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 
-// ✅ CONFIGURACIÓN CORS CORREGIDA - PRIORIDAD A LOCALHOST EN DESARROLLO
+const isDevelopment = process.env.NODE_ENV === "development";
+
+// ✅ MIDDLEWARE SIN LIMITES (para desarrollo)
+const noRateLimit = (req, res, next) => {
+  console.log("🔓 Rate limiting desactivado en desarrollo");
+  next();
+};
+
+// ✅ RATE LIMITING SOLO PARA PRODUCCIÓN
+const loginLimiter = isDevelopment
+  ? noRateLimit
+  : rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutos
+      max: 50, // 50 intentos en producción
+      message: {
+        ok: false,
+        msg: "Demasiados intentos de login. Intenta nuevamente en 15 minutos.",
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+    });
+
+// ✅ RATE LIMITING MUY PERMISIVO PARA DESARROLLO
+const apiLimiter = isDevelopment
+  ? rateLimit({
+      windowMs: 1 * 60 * 1000, // 1 minuto
+      max: 1000, // 1000 requests por minuto en desarrollo
+      message: {
+        ok: false,
+        msg: "Demasiadas solicitudes en desarrollo.",
+      },
+    })
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 500, // 500 requests en producción
+      message: {
+        ok: false,
+        msg: "Demasiadas solicitudes desde esta IP.",
+      },
+    });
+
+// ✅ RATE LIMITING PARA ESCRITURA - PERMISIVO
+const writeLimiter = isDevelopment
+  ? rateLimit({
+      windowMs: 1 * 60 * 1000,
+      max: 500, // 500 operaciones por minuto en desarrollo
+      message: {
+        ok: false,
+        msg: "Demasiadas operaciones de escritura en desarrollo.",
+      },
+    })
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 100, // 100 operaciones en producción
+      message: {
+        ok: false,
+        msg: "Demasiadas operaciones de escritura.",
+      },
+    });
+
+// ✅ CONFIGURACIÓN CORS (mantener igual)
 const corsOptions = {
   origin: function (origin, callback) {
-    // En desarrollo, permitir localhost siempre
     if (process.env.NODE_ENV === "development") {
       console.log("🔧 Desarrollo - Permitido:", origin);
       return callback(null, true);
     }
 
-    // Permitir requests sin origin (mobile apps, curl, etc.)
     if (!origin) {
       console.log("📱 Request sin origin - Permitido");
       return callback(null, true);
@@ -28,7 +87,6 @@ const corsOptions = {
       "https://sistema-de-ventas-pos-frontend.vercel.app",
     ];
 
-    // ✅ CORRECCIÓN: Verificar si el origen está en la lista
     if (allowedOrigins.includes(origin)) {
       console.log("✅ Origen permitido:", origin);
       callback(null, true);
@@ -52,7 +110,7 @@ const corsOptions = {
   ],
 };
 
-// ✅ MIDDLEWARE CORS MANUAL MEJORADO
+// ✅ MIDDLEWARE CORS MANUAL (mantener igual)
 const manualCORS = (req, res, next) => {
   const allowedOrigins = [
     "http://localhost:5173",
@@ -62,20 +120,15 @@ const manualCORS = (req, res, next) => {
 
   const origin = req.headers.origin;
 
-  // ✅ CORRECCIÓN: En desarrollo, permitir cualquier localhost
   if (
     process.env.NODE_ENV === "development" &&
     origin &&
     origin.includes("localhost")
   ) {
     res.header("Access-Control-Allow-Origin", origin);
-  }
-  // En producción, solo el dominio específico
-  else if (origin && allowedOrigins.includes(origin)) {
+  } else if (origin && allowedOrigins.includes(origin)) {
     res.header("Access-Control-Allow-Origin", origin);
-  }
-  // Si no hay origin o no está permitido, no establecer el header
-  else if (!origin) {
+  } else if (!origin) {
     res.header("Access-Control-Allow-Origin", "*");
   }
 
@@ -90,7 +143,6 @@ const manualCORS = (req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Expose-Headers", "x-token");
 
-  // Manejar preflight OPTIONS request
   if (req.method === "OPTIONS") {
     console.log("🔄 Preflight OPTIONS request manejado");
     return res.status(200).end();
@@ -98,42 +150,11 @@ const manualCORS = (req, res, next) => {
 
   next();
 };
-// Rate limiting para login
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: {
-    ok: false,
-    msg: "Demasiados intentos de login. Intenta nuevamente en 15 minutos.",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Rate limiting general
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
-  message: {
-    ok: false,
-    msg: "Demasiadas solicitudes desde esta IP.",
-  },
-});
-
-// Rate limiting para escritura
-const writeLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-  message: {
-    ok: false,
-    msg: "Demasiadas operaciones de escritura.",
-  },
-});
 
 // Middlewares de seguridad
 const securityMiddleware = [
-  manualCORS, // ✅ CORS MANUAL PRIMERO
-  cors(corsOptions), // ✅ CORS de cors package
+  manualCORS,
+  cors(corsOptions),
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,

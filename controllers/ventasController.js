@@ -1,9 +1,9 @@
-// controllers/ventasController.js - VERSIÓN COMPLETA CORREGIDA
+// controllers/ventasController.js - VERSIÓN SIN INVENTARIO
 import { Venta } from "../models/Venta.js";
 import { DetalleVenta } from "../models/DetalleVenta.js";
 import { db } from "../database/connection.js";
 
-// ✅ FUNCIÓN PARA ACTUALIZAR STOCK DE PRODUCTOS
+// ✅ FUNCIÓN PARA ACTUALIZAR STOCK DE PRODUCTOS (SOLO EN PRODUCTOS)
 const actualizarStockProductos = async (productos) => {
   try {
     console.log("🔄 [STOCK BACKEND] Actualizando stock desde VENTA...");
@@ -36,25 +36,6 @@ const actualizarStockProductos = async (productos) => {
         // 2. Actualizar stock en tabla productos
         const updateProductQuery = `UPDATE productos SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`;
         await db.execute(updateProductQuery, [nuevoStock, productoId]);
-
-        // 3. Actualizar stock en tabla inventario
-        try {
-          const updateInventarioQuery = `UPDATE inventario SET stock_actual = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE producto_id = ?`;
-          await db.execute(updateInventarioQuery, [nuevoStock, productoId]);
-        } catch (inventarioError) {
-          console.warn(
-            `⚠️ No se pudo actualizar inventario: ${inventarioError.message}`
-          );
-          // Crear registro si no existe
-          try {
-            const createInventarioQuery = `INSERT INTO inventario (producto_id, stock_actual, stock_minimo, fecha_actualizacion) VALUES (?, ?, 5, CURRENT_TIMESTAMP)`;
-            await db.execute(createInventarioQuery, [productoId, nuevoStock]);
-          } catch (createError) {
-            console.warn(
-              `⚠️ No se pudo crear inventario: ${createError.message}`
-            );
-          }
-        }
 
         console.log(
           `✅ Stock actualizado por venta: ${productoActual.nombre} -> ${nuevoStock}`
@@ -129,7 +110,7 @@ const revertirStockProductos = async (productos) => {
   }
 };
 
-// ✅ FUNCIÓN PRINCIPAL CREAR VENTA - COMPLETAMENTE CORREGIDA
+// ✅ FUNCIÓN PRINCIPAL CREAR VENTA - SIN INVENTARIO
 export const crearVenta = async (req, res) => {
   let ventaId = null;
 
@@ -352,207 +333,8 @@ export const crearVenta = async (req, res) => {
   }
 };
 
-// ✅ OBTENER VENTAS
-export const obtenerVentas = async (req, res) => {
-  try {
-    console.log("📥 [BACKEND] GET /api/ventas recibida");
-    const { limite = 50, pagina = 1, sesion_id } = req.query;
-
-    let ventas;
-    if (sesion_id) {
-      ventas = await Venta.findBySesionCaja(sesion_id);
-    } else {
-      ventas = await Venta.findAll({
-        limite: parseInt(limite),
-        pagina: parseInt(pagina),
-      });
-    }
-
-    console.log(`📤 [BACKEND] Enviando ${ventas.length} ventas`);
-
-    res.json({
-      ok: true,
-      ventas,
-      paginacion: {
-        pagina: parseInt(pagina),
-        limite: parseInt(limite),
-        total: ventas.length,
-      },
-    });
-  } catch (error) {
-    console.error("❌ [BACKEND] Error en obtenerVentas:", error);
-    res.status(500).json({
-      ok: false,
-      error: "Error interno al obtener ventas",
-    });
-  }
-};
-
-// ✅ OBTENER VENTA POR ID
-export const obtenerVentaPorId = async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log(`📥 [BACKEND] Obteniendo venta con ID: ${id}`);
-
-    const venta = await Venta.findById(id);
-
-    if (!venta) {
-      return res.status(404).json({
-        ok: false,
-        error: "Venta no encontrada",
-      });
-    }
-
-    // Obtener detalles de la venta
-    const detalles = await DetalleVenta.findByVentaId(id);
-
-    const ventaCompleta = {
-      ...venta,
-      productos: detalles.rows || [],
-    };
-
-    res.json({
-      ok: true,
-      venta: ventaCompleta,
-    });
-  } catch (error) {
-    console.error("❌ [BACKEND] Error en obtenerVentaPorId:", error);
-    res.status(500).json({
-      ok: false,
-      error: "Error interno al obtener la venta",
-    });
-  }
-};
-
-// ✅ OBTENER VENTAS POR SESIÓN
-export const obtenerVentasPorSesion = async (req, res) => {
-  try {
-    const { sesionId } = req.params;
-    console.log(`📥 [BACKEND] Obteniendo ventas para sesión: ${sesionId}`);
-
-    const ventas = await Venta.findBySesionCaja(sesionId);
-    const totales = await Venta.getTotalesBySesion(sesionId);
-
-    res.json({
-      ok: true,
-      ventas,
-      totales,
-    });
-  } catch (error) {
-    console.error("❌ [BACKEND] Error en obtenerVentasPorSesion:", error);
-    res.status(500).json({
-      ok: false,
-      error: "Error interno al obtener ventas por sesión",
-    });
-  }
-};
-
-// ✅ OBTENER VENTAS POR FECHA
-export const obtenerVentasPorFecha = async (req, res) => {
-  try {
-    const { fecha } = req.params;
-    console.log(`📥 [BACKEND] Obteniendo ventas para fecha: ${fecha}`);
-
-    // Validar formato de fecha
-    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
-      return res.status(400).json({
-        ok: false,
-        error: "Formato de fecha inválido. Use YYYY-MM-DD",
-      });
-    }
-
-    const ventas = await Venta.findByDate(fecha);
-
-    res.json({
-      ok: true,
-      fecha,
-      total_ventas: ventas.length,
-      ventas,
-    });
-  } catch (error) {
-    console.error("❌ [BACKEND] Error en obtenerVentasPorFecha:", error);
-    res.status(500).json({
-      ok: false,
-      error: "Error interno al obtener ventas por fecha",
-    });
-  }
-};
-
-// ✅ OBTENER ESTADÍSTICAS DE VENTAS
-export const obtenerEstadisticasVentas = async (req, res) => {
-  try {
-    const { fecha_inicio, fecha_fin, sesion_id } = req.query;
-
-    console.log(
-      `📊 [BACKEND] Obteniendo estadísticas desde ${fecha_inicio} hasta ${fecha_fin}`
-    );
-
-    let ventas = await Venta.findAll();
-
-    // Filtrar por sesión si se proporciona
-    if (sesion_id) {
-      ventas = ventas.filter((venta) => venta.sesion_caja_id == sesion_id);
-    }
-
-    // Filtrar por fecha si se proporciona
-    if (fecha_inicio && fecha_fin) {
-      ventas = ventas.filter((venta) => {
-        const fechaVenta = new Date(venta.fecha_venta)
-          .toISOString()
-          .split("T")[0];
-        return fechaVenta >= fecha_inicio && fechaVenta <= fecha_fin;
-      });
-    }
-
-    const estadisticas = {
-      total_ventas: ventas.length,
-      total_ingresos: ventas.reduce(
-        (sum, venta) => sum + parseFloat(venta.total || 0),
-        0
-      ),
-      ventas_por_metodo: {
-        efectivo: ventas.filter((v) => v.metodo_pago === "efectivo").length,
-        tarjeta: ventas.filter((v) => v.metodo_pago === "tarjeta").length,
-        transferencia: ventas.filter((v) => v.metodo_pago === "transferencia")
-          .length,
-      },
-      productos_mas_vendidos: await DetalleVenta.getProductosMasVendidos(10),
-    };
-
-    // Agrupar ventas por día
-    const ventasPorDia = {};
-    ventas.forEach((venta) => {
-      const fecha = new Date(venta.fecha_venta).toISOString().split("T")[0];
-      if (!ventasPorDia[fecha]) {
-        ventasPorDia[fecha] = {
-          fecha,
-          ventas: 0,
-          ingresos: 0,
-        };
-      }
-      ventasPorDia[fecha].ventas++;
-      ventasPorDia[fecha].ingresos += parseFloat(venta.total || 0);
-    });
-
-    estadisticas.ventas_por_dia = Object.values(ventasPorDia);
-
-    res.json({
-      ok: true,
-      estadisticas,
-    });
-  } catch (error) {
-    console.error("❌ [BACKEND] Error en obtenerEstadisticasVentas:", error);
-    res.status(500).json({
-      ok: false,
-      error: "Error interno al obtener estadísticas",
-    });
-  }
-};
-
-// ✅ CANCELAR VENTA
+// ✅ CANCELAR VENTA - SIN INVENTARIO
 export const cancelarVenta = async (req, res) => {
-  let transaction = null;
-
   try {
     const { id } = req.params;
     const { motivo } = req.body;
@@ -629,7 +411,199 @@ export const cancelarVenta = async (req, res) => {
   }
 };
 
-// ✅ SINCRONIZAR VENTAS OFFLINE
+// ... (las otras funciones de ventas permanecen iguales)
+export const obtenerVentas = async (req, res) => {
+  try {
+    console.log("📥 [BACKEND] GET /api/ventas recibida");
+    const { limite = 50, pagina = 1, sesion_id } = req.query;
+
+    let ventas;
+    if (sesion_id) {
+      ventas = await Venta.findBySesionCaja(sesion_id);
+    } else {
+      ventas = await Venta.findAll({
+        limite: parseInt(limite),
+        pagina: parseInt(pagina),
+      });
+    }
+
+    console.log(`📤 [BACKEND] Enviando ${ventas.length} ventas`);
+
+    res.json({
+      ok: true,
+      ventas,
+      paginacion: {
+        pagina: parseInt(pagina),
+        limite: parseInt(limite),
+        total: ventas.length,
+      },
+    });
+  } catch (error) {
+    console.error("❌ [BACKEND] Error en obtenerVentas:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error interno al obtener ventas",
+    });
+  }
+};
+
+export const obtenerVentaPorId = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`📥 [BACKEND] Obteniendo venta con ID: ${id}`);
+
+    const venta = await Venta.findById(id);
+
+    if (!venta) {
+      return res.status(404).json({
+        ok: false,
+        error: "Venta no encontrada",
+      });
+    }
+
+    // Obtener detalles de la venta
+    const detalles = await DetalleVenta.findByVentaId(id);
+
+    const ventaCompleta = {
+      ...venta,
+      productos: detalles.rows || [],
+    };
+
+    res.json({
+      ok: true,
+      venta: ventaCompleta,
+    });
+  } catch (error) {
+    console.error("❌ [BACKEND] Error en obtenerVentaPorId:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error interno al obtener la venta",
+    });
+  }
+};
+
+export const obtenerVentasPorSesion = async (req, res) => {
+  try {
+    const { sesionId } = req.params;
+    console.log(`📥 [BACKEND] Obteniendo ventas para sesión: ${sesionId}`);
+
+    const ventas = await Venta.findBySesionCaja(sesionId);
+    const totales = await Venta.getTotalesBySesion(sesionId);
+
+    res.json({
+      ok: true,
+      ventas,
+      totales,
+    });
+  } catch (error) {
+    console.error("❌ [BACKEND] Error en obtenerVentasPorSesion:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error interno al obtener ventas por sesión",
+    });
+  }
+};
+
+export const obtenerVentasPorFecha = async (req, res) => {
+  try {
+    const { fecha } = req.params;
+    console.log(`📥 [BACKEND] Obteniendo ventas para fecha: ${fecha}`);
+
+    // Validar formato de fecha
+    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Formato de fecha inválido. Use YYYY-MM-DD",
+      });
+    }
+
+    const ventas = await Venta.findByDate(fecha);
+
+    res.json({
+      ok: true,
+      fecha,
+      total_ventas: ventas.length,
+      ventas,
+    });
+  } catch (error) {
+    console.error("❌ [BACKEND] Error en obtenerVentasPorFecha:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error interno al obtener ventas por fecha",
+    });
+  }
+};
+
+export const obtenerEstadisticasVentas = async (req, res) => {
+  try {
+    const { fecha_inicio, fecha_fin, sesion_id } = req.query;
+
+    console.log(
+      `📊 [BACKEND] Obteniendo estadísticas desde ${fecha_inicio} hasta ${fecha_fin}`
+    );
+
+    let ventas = await Venta.findAll();
+
+    // Filtrar por sesión si se proporciona
+    if (sesion_id) {
+      ventas = ventas.filter((venta) => venta.sesion_caja_id == sesion_id);
+    }
+
+    // Filtrar por fecha si se proporciona
+    if (fecha_inicio && fecha_fin) {
+      ventas = ventas.filter((venta) => {
+        const fechaVenta = new Date(venta.fecha_venta)
+          .toISOString()
+          .split("T")[0];
+        return fechaVenta >= fecha_inicio && fechaVenta <= fecha_fin;
+      });
+    }
+
+    const estadisticas = {
+      total_ventas: ventas.length,
+      total_ingresos: ventas.reduce(
+        (sum, venta) => sum + parseFloat(venta.total || 0),
+        0
+      ),
+      ventas_por_metodo: {
+        efectivo: ventas.filter((v) => v.metodo_pago === "efectivo").length,
+        tarjeta: ventas.filter((v) => v.metodo_pago === "tarjeta").length,
+        transferencia: ventas.filter((v) => v.metodo_pago === "transferencia")
+          .length,
+      },
+      productos_mas_vendidos: await DetalleVenta.getProductosMasVendidos(10),
+    };
+
+    // Agrupar ventas por día
+    const ventasPorDia = {};
+    ventas.forEach((venta) => {
+      const fecha = new Date(venta.fecha_venta).toISOString().split("T")[0];
+      if (!ventasPorDia[fecha]) {
+        ventasPorDia[fecha] = {
+          fecha,
+          ventas: 0,
+          ingresos: 0,
+        };
+      }
+      ventasPorDia[fecha].ventas++;
+      ventasPorDia[fecha].ingresos += parseFloat(venta.total || 0);
+    });
+
+    estadisticas.ventas_por_dia = Object.values(ventasPorDia);
+
+    res.json({
+      ok: true,
+      estadisticas,
+    });
+  } catch (error) {
+    console.error("❌ [BACKEND] Error en obtenerEstadisticasVentas:", error);
+    res.status(500).json({
+      ok: false,
+      error: "Error interno al obtener estadísticas",
+    });
+  }
+};
+
 export const sincronizarVentasOffline = async (req, res) => {
   try {
     const { ventas } = req.body; // Array de ventas creadas offline
@@ -712,7 +686,6 @@ export const sincronizarVentasOffline = async (req, res) => {
   }
 };
 
-// ✅ OBTENER GANANCIAS POR SESIÓN
 export const obtenerGananciasSesion = async (req, res) => {
   try {
     const { sesionId } = req.params;
